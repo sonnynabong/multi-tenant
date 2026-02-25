@@ -286,7 +286,11 @@ if (checkWorkspace("workspace.delete")) {
 
 ## 📄 License
 
-MIT License - feel free to use this for your own SaaS products!
+[MIT License](LICENSE) - feel free to use this boilerplate for your own SaaS products!
+
+**Commercial use allowed** • **Modification allowed** • **Private use allowed**
+
+No attribution required, but a ⭐ on GitHub is appreciated 😊
 
 ---
 
