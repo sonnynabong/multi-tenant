@@ -44,7 +44,7 @@ export default function ForgotPasswordPage() {
             We&apos;ve sent you a password reset link. Please check your email.
           </CardDescription>
         </CardHeader>
-        <CardFooter>
+        <CardFooter className="pt-2">
           <Button variant="outline" className="w-full" asChild>
             <Link href="/login">Back to login</Link>
           </Button>
@@ -80,7 +80,7 @@ export default function ForgotPasswordPage() {
             />
           </div>
         </CardContent>
-        <CardFooter className="flex flex-col gap-2">
+        <CardFooter className="flex flex-col gap-2 pt-4">
           <Button type="submit" className="w-full" disabled={isLoading}>
             {isLoading ? "Sending..." : "Send reset link"}
           </Button>
