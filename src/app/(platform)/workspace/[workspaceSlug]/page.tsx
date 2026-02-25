@@ -13,17 +13,29 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
   const { workspaceSlug } = await params
   const supabase = await createClient()
   
-  const { data: { user } } = await supabase.auth.getUser()
+  // Get current user
+  const { data: { user }, error: userError } = await supabase.auth.getUser()
   if (!user) redirect("/login")
 
-  const { data: workspace } = await supabase
+  // First get the workspace
+  const { data: workspace, error: workspaceError } = await supabase
     .from("workspaces")
-    .select("*, members:workspace_members(role)")
+    .select("*")
     .eq("slug", workspaceSlug)
     .single()
 
-  if (!workspace) notFound()
+  if (workspaceError || !workspace) {
+    console.log("Workspace error:", workspaceError)
+    notFound()
+  }
 
+  // Then get members separately
+  const { data: members } = await supabase
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspace.id)
+
+  // Get projects
   const { data: projects } = await supabase
     .from("projects")
     .select("*")
@@ -58,7 +70,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {workspace.members?.length || 0}
+                  {members?.length || 0}
                 </div>
               </CardContent>
             </Card>
@@ -78,7 +90,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold capitalize">
-                  {workspace.members?.[0]?.role}
+                  {members?.[0]?.role || "Member"}
                 </div>
               </CardContent>
             </Card>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
@@ -13,8 +13,13 @@ export default function NewWorkspacePage() {
   const [name, setName] = useState("")
   const [slug, setSlug] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [origin, setOrigin] = useState("")
   const router = useRouter()
   const supabase = createClient()
+
+  useEffect(() => {
+    setOrigin(window.location.origin)
+  }, [])
 
   const generateSlug = (name: string) => {
     return name
@@ -81,14 +86,14 @@ export default function NewWorkspacePage() {
               <Label htmlFor="slug">Workspace URL</Label>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-muted-foreground whitespace-nowrap">
-                  {typeof window !== 'undefined' ? window.location.origin : ''}/workspace/
+                  {origin}/workspace/
                 </span>
                 <Input
                   id="slug"
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
                   required
-                  pattern="[a-z0-9-]+"
+                  pattern="[a-z0-9\-]+"
                 />
               </div>
             </div>
