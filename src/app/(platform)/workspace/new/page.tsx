@@ -57,7 +57,7 @@ export default function NewWorkspacePage() {
   }
 
   return (
-    <div className="container max-w-md py-16">
+    <div className="mx-auto max-w-md px-4 sm:px-6 lg:px-8 py-16">
       <Card>
         <CardHeader>
           <CardTitle>Create Workspace</CardTitle>

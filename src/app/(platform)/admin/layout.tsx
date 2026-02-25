@@ -57,7 +57,7 @@ export default async function AdminLayout({
           </div>
         </ScrollArea>
       </aside>
-      <main className="flex-1 p-8">
+      <main className="flex-1 flex flex-col px-4 sm:px-6 lg:px-8 py-8">
         {children}
       </main>
     </div>

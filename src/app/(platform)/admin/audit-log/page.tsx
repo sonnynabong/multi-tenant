@@ -17,7 +17,7 @@ export default async function AdminAuditLogPage() {
     .limit(100)
 
   return (
-    <div className="space-y-8">
+    <div className="flex-1 flex flex-col space-y-8">
       <div>
         <h1 className="text-3xl font-bold">Audit Log</h1>
         <p className="text-muted-foreground">Track all platform activities</p>

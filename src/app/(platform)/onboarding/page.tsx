@@ -59,7 +59,7 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="container flex items-center justify-center min-h-[calc(100vh-3.5rem)]">
+    <div className="flex-1 flex items-center justify-center min-h-[calc(100vh-3.5rem)] px-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Create your first workspace</CardTitle>

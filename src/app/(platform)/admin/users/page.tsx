@@ -18,7 +18,7 @@ export default async function AdminUsersPage() {
     .order("created_at", { ascending: false })
 
   return (
-    <div className="space-y-8">
+    <div className="flex-1 flex flex-col space-y-8">
       <div>
         <h1 className="text-3xl font-bold">Users</h1>
         <p className="text-muted-foreground">Manage all users on the platform</p>

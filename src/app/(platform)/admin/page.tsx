@@ -17,7 +17,7 @@ export default async function AdminDashboardPage() {
     .select("*", { count: "exact", head: true })
 
   return (
-    <div className="space-y-8">
+    <div className="flex-1 flex flex-col space-y-8">
       <div>
         <h1 className="text-3xl font-bold">Admin Dashboard</h1>
         <p className="text-muted-foreground">Platform overview and statistics</p>
