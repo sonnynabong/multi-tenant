@@ -28,7 +28,7 @@ export default async function WorkspacesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
+    <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-8 xl:px-12 py-12">
       {/* Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-10">
         <div>
@@ -46,7 +46,7 @@ export default async function WorkspacesPage() {
       </div>
 
       {/* Workspaces Grid */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {workspaces?.map((workspace) => (
           <Card key={workspace.id} className="hover:border-primary/50 transition-all hover:shadow-md group">
             <Link href={`/workspace/${workspace.slug}`}>
