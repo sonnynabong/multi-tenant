@@ -824,3 +824,93 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_...
 > - **Project** (scoped work unit with Owner, Admin, Editor, Commenter, Viewer roles)
 >
 > Implement complete row-level security with helper functions, a permission system on both server and client, auto-triggers for profile creation and ownership assignment, and a clean workspace → project navigation structure. Use shadcn/ui for all interface components with a modern, premium aesthetic. Follow the phased implementation order starting with auth and building up to the super admin panel.
+
+---
+
+## Appendix A: Implementation Notes & Deviations
+
+This section documents the actual implementation status and any deviations from the original specification.
+
+### ✅ Implemented Features
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Auth (login/signup/forgot-password) | ✅ Complete | All auth flows working |
+| Database schema | ✅ Complete | All tables, enums, indexes |
+| RLS policies | ✅ Complete | Fixed recursion issues, security hardened |
+| Helper functions | ✅ Complete | `is_super_admin()`, `get_workspace_role()`, `get_project_role()` |
+| Auto-triggers | ✅ Complete | Profile creation, workspace/project ownership |
+| Workspace CRUD | ✅ Complete | Create, list, settings, delete |
+| Workspace members | ✅ Complete | Invite, remove, role management |
+| Project CRUD | ✅ Complete | Create, list, settings, delete |
+| Admin panel | ✅ Complete | Dashboard, workspaces list, users list, audit log |
+| Permission system | ✅ Complete | `permissions.ts`, `usePermissions`, `PermissionGate` |
+| Middleware | ✅ Complete | Auth routing, super admin protection |
+| Analytics page | ✅ Complete | Basic workspace analytics |
+| Landing page | ✅ Complete | Marketing page with navigation |
+
+### 🚧 Partially Implemented / Structure Deviations
+
+| PRD Spec | Actual Implementation | Reason |
+|----------|----------------------|--------|
+| `/workspace/[slug]/settings/members` | `/workspace/[slug]/members` | Simpler navigation - members is top-level |
+| `/workspace/[slug]/settings/billing` | ❌ Not implemented | Out of scope for MVP |
+| `/workspace/[slug]/settings/roles` | ❌ Not implemented | Custom roles out of scope |
+| `/workspace/[slug]/audit-log` | ❌ Not implemented | Only global admin audit log |
+| `/workspace/[slug]/project/[slug]/members` | ❌ Not implemented | Future enhancement |
+| `lib/supabase/admin.ts` | ❌ Not implemented | Service role not needed for client-side |
+| `hooks/use-realtime.ts` | ❌ Not implemented | Realtime subscriptions not implemented |
+| `types/workspace.ts`, etc. | Consolidated in `database.ts` + `constants.ts` | Simpler type management |
+
+### 📁 Additional Files Created (Outside PRD Scope)
+
+| File | Purpose |
+|------|---------|
+| `/supabase/schema.sql` | Complete database schema for easy setup |
+| `/LICENSE` | MIT License for open source |
+| `/README.md` | Comprehensive boilerplate documentation |
+| `/src/app/(platform)/workspace/[workspaceSlug]/analytics/page.tsx` | Analytics dashboard |
+| `/src/app/page.tsx` | Landing/marketing page |
+
+### 🔧 RLS Policy Changes
+
+The original PRD RLS policies had recursion issues. The implemented policies:
+
+1. **Fixed recursion** in `workspace_members` and `project_members` SELECT policies
+2. **Removed overly permissive policies** that allowed any authenticated user full access
+3. **Added proper role-based checks** using helper functions
+4. **Added self-service leave** (users can remove themselves)
+
+See migration `fix_permissive_rls_policies` for details.
+
+### 🎯 Simplified Components
+
+The PRD suggested many specialized components. We consolidated:
+
+- `workspace-switcher.tsx`, `workspace-card.tsx` → Combined in pages
+- `member-list.tsx`, `invite-member-dialog.tsx` → Inline in members page
+- `admin-sidebar.tsx` → Simple nav in admin layout
+- `data-table.tsx`, `empty-state.tsx`, `loading-skeleton.tsx` → Using shadcn/ui directly
+
+### 📝 TypeScript Types
+
+Types are organized as:
+- `types/database.ts` - Generated Supabase types (main source)
+- `lib/constants.ts` - Role enums and permission definitions
+- No separate `types/workspace.ts`, `types/project.ts` files
+
+### 🚀 Deployment Ready
+
+The application is **production-ready** with:
+- ✅ Complete auth system
+- ✅ Full RLS security
+- ✅ Working multi-tenant hierarchy
+- ✅ Admin panel
+- ✅ Modern UI with shadcn/ui
+
+Missing for full PRD compliance (future phases):
+- Billing integration
+- Custom role management
+- Real-time subscriptions
+- Email notifications
+- Feature flags
