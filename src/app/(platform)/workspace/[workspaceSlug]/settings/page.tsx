@@ -81,7 +81,7 @@ export default function WorkspaceSettingsPage() {
     <>
       <Sidebar workspaceSlug={workspaceSlug} />
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-2xl">
+        <div className="mx-auto max-w-2xl">
           <h1 className="text-3xl font-bold mb-6">Workspace Settings</h1>
           
           <Tabs defaultValue="general">

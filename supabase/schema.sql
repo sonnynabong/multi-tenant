@@ -1,5 +1,6 @@
 -- ============================================================
 -- Multi-Tenant SaaS Boilerplate - Database Schema
+-- Generated: 2026-02-25
 -- Next.js 14+ + Supabase
 -- ============================================================
 
@@ -259,13 +260,8 @@ CREATE POLICY "Only workspace owner can delete"
 CREATE POLICY "Super admins can manage all workspace members"
   ON public.workspace_members FOR ALL USING (public.is_super_admin());
 
-CREATE POLICY "Members can view workspace members"
-  ON public.workspace_members FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.workspace_members wm
-      WHERE wm.workspace_id = workspace_id AND wm.user_id = auth.uid()
-    )
-  );
+CREATE POLICY "Users can view their workspace memberships"
+  ON public.workspace_members FOR SELECT USING (user_id = auth.uid());
 
 CREATE POLICY "Owners and admins can manage workspace members"
   ON public.workspace_members FOR ALL USING (

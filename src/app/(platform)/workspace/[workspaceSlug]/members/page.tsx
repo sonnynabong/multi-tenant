@@ -105,7 +105,7 @@ export default function WorkspaceMembersPage() {
     <>
       <Sidebar workspaceSlug={workspaceSlug} />
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="max-w-4xl">
+        <div className="mx-auto max-w-4xl">
           <h1 className="text-3xl font-bold mb-6">Workspace Members</h1>
           
           <Card className="mb-6">

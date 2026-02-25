@@ -2,6 +2,8 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { useEffect } from "react"
+import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,8 +15,28 @@ export default function OnboardingPage() {
   const [name, setName] = useState("")
   const [slug, setSlug] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [hasWorkspaces, setHasWorkspaces] = useState(false)
   const router = useRouter()
   const supabase = createClient()
+
+  // Check if user already has workspaces
+  useEffect(() => {
+    const checkWorkspaces = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: memberships } = await supabase
+        .from("workspace_members")
+        .select("id")
+        .eq("user_id", user.id)
+        .limit(1)
+
+      if (memberships && memberships.length > 0) {
+        setHasWorkspaces(true)
+      }
+    }
+    checkWorkspaces()
+  }, [supabase])
 
   const generateSlug = (name: string) => {
     return name
@@ -66,6 +88,13 @@ export default function OnboardingPage() {
           <CardDescription>
             A workspace is where you and your team can collaborate on projects
           </CardDescription>
+          {hasWorkspaces && (
+            <div className="pt-2">
+              <Link href="/workspace" className="text-sm text-primary hover:underline">
+                ← Back to my workspaces
+              </Link>
+            </div>
+          )}
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
@@ -93,7 +122,7 @@ export default function OnboardingPage() {
               </div>
             </div>
           </CardContent>
-          <CardFooter>
+          <CardFooter className="pt-2">
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? "Creating..." : "Create Workspace"}
             </Button>

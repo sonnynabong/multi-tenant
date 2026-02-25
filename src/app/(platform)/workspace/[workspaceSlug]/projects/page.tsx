@@ -102,7 +102,8 @@ export default function ProjectsPage() {
     <>
       <Sidebar workspaceSlug={workspaceSlug} />
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center justify-between mb-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold">Projects</h1>
             <p className="text-muted-foreground">Manage your workspace projects</p>
@@ -168,6 +169,7 @@ export default function ProjectsPage() {
               </Card>
             </Link>
           ))}
+          </div>
         </div>
       </main>
     </>
