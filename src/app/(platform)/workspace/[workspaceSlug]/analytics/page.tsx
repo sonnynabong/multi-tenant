@@ -1,45 +1,165 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { useParams } from "next/navigation"
+import { createClient } from "@/lib/supabase/client"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TrendingUp, Users, FolderKanban, Activity } from "lucide-react"
+import { TrendingUp, Users, FolderKanban, Activity, Clock } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
+
+interface AnalyticsData {
+  totalProjects: number
+  totalMembers: number
+  activeProjects: number
+  archivedProjects: number
+  recentActivity: Array<{
+    action: string
+    user: string
+    time: string
+  }>
+}
 
 export default function AnalyticsPage() {
   const params = useParams()
   const workspaceSlug = params.workspaceSlug as string
+  const supabase = createClient()
+  
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [workspace, setWorkspace] = useState<any>(null)
 
-  // Mock analytics data
+  useEffect(() => {
+    fetchAnalytics()
+  }, [workspaceSlug])
+
+  const fetchAnalytics = async () => {
+    setIsLoading(true)
+    
+    // Get workspace
+    const { data: workspaceData } = await supabase
+      .from("workspaces")
+      .select("*")
+      .eq("slug", workspaceSlug)
+      .single()
+
+    if (!workspaceData) {
+      setIsLoading(false)
+      return
+    }
+    
+    setWorkspace(workspaceData)
+
+    // Get projects count
+    const { count: totalProjects } = await supabase
+      .from("projects")
+      .select("*", { count: "exact", head: true })
+      .eq("workspace_id", workspaceData.id)
+
+    const { count: activeProjects } = await supabase
+      .from("projects")
+      .select("*", { count: "exact", head: true })
+      .eq("workspace_id", workspaceData.id)
+      .eq("is_archived", false)
+
+    const { count: archivedProjects } = await supabase
+      .from("projects")
+      .select("*", { count: "exact", head: true })
+      .eq("workspace_id", workspaceData.id)
+      .eq("is_archived", true)
+
+    // Get members count
+    const { count: totalMembers } = await supabase
+      .from("workspace_members")
+      .select("*", { count: "exact", head: true })
+      .eq("workspace_id", workspaceData.id)
+
+    // Get recent activity from audit logs
+    const { data: auditLogs } = await supabase
+      .from("audit_logs")
+      .select(`
+        action,
+        created_at,
+        user:profiles(full_name)
+      `)
+      .eq("workspace_id", workspaceData.id)
+      .order("created_at", { ascending: false })
+      .limit(10)
+
+    const recentActivity = auditLogs?.map(log => ({
+      action: log.action,
+      user: (log.user as any)?.full_name || "Unknown",
+      time: formatTimeAgo(new Date(log.created_at || "")),
+    })) || []
+
+    // If no audit logs, generate some placeholder activity based on projects
+    if (recentActivity.length === 0) {
+      const { data: recentProjects } = await supabase
+        .from("projects")
+        .select(`
+          name,
+          created_at,
+          created_by,
+          creator:profiles!projects_created_by_fkey(full_name)
+        `)
+        .eq("workspace_id", workspaceData.id)
+        .order("created_at", { ascending: false })
+        .limit(5)
+
+      recentProjects?.forEach(proj => {
+        recentActivity.push({
+          action: `Project "${proj.name}" created`,
+          user: (proj as any).creator?.full_name || "Unknown",
+          time: formatTimeAgo(new Date(proj.created_at || "")),
+        })
+      })
+    }
+
+    setAnalytics({
+      totalProjects: totalProjects || 0,
+      totalMembers: totalMembers || 0,
+      activeProjects: activeProjects || 0,
+      archivedProjects: archivedProjects || 0,
+      recentActivity,
+    })
+    
+    setIsLoading(false)
+  }
+
+  const formatTimeAgo = (date: Date): string => {
+    const now = new Date()
+    const diff = now.getTime() - date.getTime()
+    const minutes = Math.floor(diff / 60000)
+    const hours = Math.floor(minutes / 60)
+    const days = Math.floor(hours / 24)
+
+    if (minutes < 1) return "just now"
+    if (minutes < 60) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`
+    if (hours < 24) return `${hours} hour${hours > 1 ? "s" : ""} ago`
+    if (days < 30) return `${days} day${days > 1 ? "s" : ""} ago`
+    return date.toLocaleDateString()
+  }
+
   const stats = [
     {
       title: "Total Projects",
-      value: "12",
-      change: "+3 this month",
+      value: analytics?.totalProjects || 0,
       icon: FolderKanban,
       trend: "up",
     },
     {
-      title: "Total Members",
-      value: "8",
-      change: "+2 this month",
-      icon: Users,
-      trend: "up",
-    },
-    {
-      title: "Workspace Activity",
-      value: "94%",
-      change: "+5% from last week",
+      title: "Active Projects",
+      value: analytics?.activeProjects || 0,
       icon: Activity,
       trend: "up",
     },
-  ]
-
-  const recentActivity = [
-    { action: "New project created", user: "John Doe", time: "2 hours ago" },
-    { action: "Member invited", user: "Jane Smith", time: "5 hours ago" },
-    { action: "Project updated", user: "Mike Johnson", time: "1 day ago" },
-    { action: "Task completed", user: "Sarah Williams", time: "2 days ago" },
+    {
+      title: "Total Members",
+      value: analytics?.totalMembers || 0,
+      icon: Users,
+      trend: "up",
+    },
   ]
 
   return (
@@ -51,23 +171,27 @@ export default function AnalyticsPage() {
 
           {/* Stats Cards */}
           <div className="grid gap-4 md:grid-cols-3 mb-8">
-            {stats.map((stat) => (
-              <Card key={stat.title}>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">
-                    {stat.title}
-                  </CardTitle>
-                  <stat.icon className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{stat.value}</div>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <TrendingUp className="h-3 w-3 text-green-500" />
-                    {stat.change}
-                  </p>
-                </CardContent>
-              </Card>
-            ))}
+            {isLoading ? (
+              <>
+                <Skeleton className="h-32" />
+                <Skeleton className="h-32" />
+                <Skeleton className="h-32" />
+              </>
+            ) : (
+              stats.map((stat) => (
+                <Card key={stat.title}>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">
+                      {stat.title}
+                    </CardTitle>
+                    <stat.icon className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{stat.value}</div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
           </div>
 
           {/* Tabs */}
@@ -87,64 +211,39 @@ export default function AnalyticsPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-4">
-                    {recentActivity.map((item, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between border-b last:border-0 pb-4 last:pb-0"
-                      >
-                        <div>
-                          <p className="font-medium">{item.action}</p>
-                          <p className="text-sm text-muted-foreground">
-                            by {item.user}
-                          </p>
+                  {isLoading ? (
+                    <div className="space-y-4">
+                      <Skeleton className="h-12" />
+                      <Skeleton className="h-12" />
+                      <Skeleton className="h-12" />
+                    </div>
+                  ) : analytics?.recentActivity && analytics.recentActivity.length > 0 ? (
+                    <div className="space-y-4">
+                      {analytics.recentActivity.map((item, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center justify-between border-b last:border-0 pb-4 last:pb-0"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Clock className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                              <p className="font-medium">{item.action}</p>
+                              <p className="text-sm text-muted-foreground">
+                                by {item.user}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-sm text-muted-foreground">
+                            {item.time}
+                          </span>
                         </div>
-                        <span className="text-sm text-muted-foreground">
-                          {item.time}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Workspace Health</CardTitle>
-                  <CardDescription>
-                    Overall workspace performance metrics
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium">Storage Usage</span>
-                        <span className="text-sm text-muted-foreground">65%</span>
-                      </div>
-                      <div className="h-2 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-primary w-[65%]" />
-                      </div>
+                      ))}
                     </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium">API Calls</span>
-                        <span className="text-sm text-muted-foreground">42%</span>
-                      </div>
-                      <div className="h-2 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-green-500 w-[42%]" />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium">Active Sessions</span>
-                        <span className="text-sm text-muted-foreground">78%</span>
-                      </div>
-                      <div className="h-2 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500 w-[78%]" />
-                      </div>
-                    </div>
-                  </div>
+                  ) : (
+                    <p className="text-muted-foreground text-center py-8">
+                      No recent activity to display
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -158,9 +257,38 @@ export default function AnalyticsPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-muted-foreground">
-                    Project-specific analytics will be displayed here.
-                  </p>
+                  {isLoading ? (
+                    <Skeleton className="h-48" />
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-4 bg-muted rounded-lg">
+                          <p className="text-sm text-muted-foreground">Active Projects</p>
+                          <p className="text-2xl font-bold">{analytics?.activeProjects || 0}</p>
+                        </div>
+                        <div className="p-4 bg-muted rounded-lg">
+                          <p className="text-sm text-muted-foreground">Archived Projects</p>
+                          <p className="text-2xl font-bold">{analytics?.archivedProjects || 0}</p>
+                        </div>
+                      </div>
+                      <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-primary transition-all" 
+                          style={{ 
+                            width: analytics?.totalProjects 
+                              ? `${(analytics.activeProjects / analytics.totalProjects) * 100}%` 
+                              : "0%" 
+                          }} 
+                        />
+                      </div>
+                      <p className="text-sm text-muted-foreground text-center">
+                        {analytics?.totalProjects 
+                          ? `${Math.round((analytics.activeProjects / analytics.totalProjects) * 100)}% of projects are active`
+                          : "No projects yet"
+                        }
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -170,13 +298,23 @@ export default function AnalyticsPage() {
                 <CardHeader>
                   <CardTitle>Member Analytics</CardTitle>
                   <CardDescription>
-                    Team member activity and contributions
+                    Team member statistics
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-muted-foreground">
-                    Member-specific analytics will be displayed here.
-                  </p>
+                  {isLoading ? (
+                    <Skeleton className="h-48" />
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="p-4 bg-muted rounded-lg">
+                        <p className="text-sm text-muted-foreground">Total Members</p>
+                        <p className="text-2xl font-bold">{analytics?.totalMembers || 0}</p>
+                      </div>
+                      <p className="text-muted-foreground">
+                        Detailed member analytics will be expanded in future updates.
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

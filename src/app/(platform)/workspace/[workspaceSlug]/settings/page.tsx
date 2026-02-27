@@ -9,7 +9,11 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Sidebar } from "@/components/layout/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
+import { hasWorkspacePermission } from "@/lib/permissions"
+import { logAction, AuditActions } from "@/lib/audit"
+import type { WorkspaceRole } from "@/lib/constants"
 
 export default function WorkspaceSettingsPage() {
   const params = useParams()
@@ -19,28 +23,73 @@ export default function WorkspaceSettingsPage() {
   
   const [workspace, setWorkspace] = useState<any>(null)
   const [name, setName] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
+  const [slug, setSlug] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [userRole, setUserRole] = useState<WorkspaceRole | null>(null)
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
   useEffect(() => {
-    const fetchWorkspace = async () => {
-      const { data } = await supabase
-        .from("workspaces")
-        .select("*")
-        .eq("slug", workspaceSlug)
-        .single()
-      
-      if (data) {
-        setWorkspace(data)
-        setName(data.name)
-      }
+    fetchData()
+  }, [workspaceSlug])
+
+  const fetchData = async () => {
+    setIsLoading(true)
+    
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setIsLoading(false)
+      return
     }
-    fetchWorkspace()
-  }, [workspaceSlug, supabase])
+
+    // Get user's super admin status
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_super_admin")
+      .eq("id", user.id)
+      .single()
+    
+    setIsSuperAdmin(profile?.is_super_admin || false)
+
+    // Get workspace
+    const { data: workspaceData } = await supabase
+      .from("workspaces")
+      .select("*")
+      .eq("slug", workspaceSlug)
+      .single()
+    
+    if (workspaceData) {
+      setWorkspace(workspaceData)
+      setName(workspaceData.name)
+      setSlug(workspaceData.slug)
+
+      // Get user's role in this workspace
+      const { data: memberData } = await supabase
+        .from("workspace_members")
+        .select("role")
+        .eq("workspace_id", workspaceData.id)
+        .eq("user_id", user.id)
+        .single()
+
+      setUserRole(memberData?.role || null)
+    }
+    
+    setIsLoading(false)
+  }
+
+  const canUpdateSettings = isSuperAdmin || hasWorkspacePermission(userRole, "workspace.settings")
+  const canDelete = isSuperAdmin || hasWorkspacePermission(userRole, "workspace.delete")
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsLoading(true)
+    if (!canUpdateSettings) {
+      toast.error("You don't have permission to update workspace settings")
+      return
+    }
+    
+    setIsSaving(true)
 
     const { error } = await supabase
       .from("workspaces")
@@ -51,11 +100,25 @@ export default function WorkspaceSettingsPage() {
       toast.error(error.message)
     } else {
       toast.success("Workspace updated")
+      
+      // Log the action
+      await logAction({
+        workspaceId: workspace?.id,
+        action: AuditActions.WORKSPACE_UPDATED,
+        targetType: "workspace",
+        targetId: workspace?.id,
+        metadata: { name },
+      })
     }
-    setIsLoading(false)
+    setIsSaving(false)
   }
 
   const handleDelete = async () => {
+    if (!canDelete) {
+      toast.error("You don't have permission to delete this workspace")
+      return
+    }
+
     if (!confirm("Are you sure you want to delete this workspace? This action cannot be undone.")) {
       return
     }
@@ -71,11 +134,51 @@ export default function WorkspaceSettingsPage() {
       setIsDeleting(false)
     } else {
       toast.success("Workspace deleted")
+      
+      // Log the action
+      await logAction({
+        action: AuditActions.WORKSPACE_DELETED,
+        targetType: "workspace",
+        targetId: workspace?.id,
+        metadata: { name: workspace?.name },
+      })
+      
       router.push("/workspace")
     }
   }
 
-  if (!workspace) return null
+  if (isLoading) {
+    return (
+      <>
+        <Sidebar workspaceSlug={workspaceSlug} />
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+          <div className="mx-auto max-w-2xl">
+            <Skeleton className="h-10 w-64 mb-6" />
+            <Skeleton className="h-96" />
+          </div>
+        </main>
+      </>
+    )
+  }
+
+  if (!workspace) {
+    return (
+      <>
+        <Sidebar workspaceSlug={workspaceSlug} />
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+          <div className="mx-auto max-w-2xl text-center">
+            <h1 className="text-3xl font-bold mb-4">Workspace Not Found</h1>
+            <p className="text-muted-foreground mb-6">
+              The workspace you're looking for doesn't exist or you don't have access to it.
+            </p>
+            <Button onClick={() => router.push("/workspace")}>
+              Back to Workspaces
+            </Button>
+          </div>
+        </main>
+      </>
+    )
+  }
 
   return (
     <>
@@ -87,7 +190,7 @@ export default function WorkspaceSettingsPage() {
           <Tabs defaultValue="general">
             <TabsList>
               <TabsTrigger value="general">General</TabsTrigger>
-              <TabsTrigger value="danger">Danger Zone</TabsTrigger>
+              {canDelete && <TabsTrigger value="danger">Danger Zone</TabsTrigger>}
             </TabsList>
             
             <TabsContent value="general">
@@ -107,37 +210,60 @@ export default function WorkspaceSettingsPage() {
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         required
+                        disabled={!canUpdateSettings}
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="slug">Workspace Slug</Label>
+                      <Input
+                        id="slug"
+                        value={slug}
+                        disabled
+                        className="bg-muted"
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        The slug cannot be changed after creation.
+                      </p>
                     </div>
                   </CardContent>
                   <CardFooter>
-                    <Button type="submit" disabled={isLoading}>
-                      {isLoading ? "Saving..." : "Save Changes"}
+                    <Button type="submit" disabled={isSaving || !canUpdateSettings}>
+                      {isSaving ? "Saving..." : "Save Changes"}
                     </Button>
                   </CardFooter>
                 </form>
               </Card>
             </TabsContent>
             
-            <TabsContent value="danger">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Danger Zone</CardTitle>
-                  <CardDescription>
-                    Irreversible and destructive actions
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button
-                    variant="destructive"
-                    onClick={handleDelete}
-                    disabled={isDeleting}
-                  >
-                    {isDeleting ? "Deleting..." : "Delete Workspace"}
-                  </Button>
-                </CardContent>
-              </Card>
-            </TabsContent>
+            {canDelete && (
+              <TabsContent value="danger">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Danger Zone</CardTitle>
+                    <CardDescription>
+                      Irreversible and destructive actions
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between p-4 border rounded-lg border-destructive/50">
+                      <div>
+                        <h4 className="font-medium">Delete Workspace</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Permanently delete this workspace and all its data
+                        </p>
+                      </div>
+                      <Button
+                        variant="destructive"
+                        onClick={handleDelete}
+                        disabled={isDeleting}
+                      >
+                        {isDeleting ? "Deleting..." : "Delete Workspace"}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </main>
