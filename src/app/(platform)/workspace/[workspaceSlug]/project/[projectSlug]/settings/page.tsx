@@ -11,8 +11,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Switch } from "@/components/ui/switch"
 import { Sidebar } from "@/components/layout/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
 import { hasProjectPermission, hasWorkspacePermission } from "@/lib/permissions"
+import { logAction, AuditActions } from "@/lib/audit"
 import type { ProjectRole, WorkspaceRole } from "@/lib/constants"
 
 export default function ProjectSettingsPage() {
@@ -27,74 +29,86 @@ export default function ProjectSettingsPage() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [isArchived, setIsArchived] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [projectRole, setProjectRole] = useState<ProjectRole | null>(null)
   const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | null>(null)
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
   useEffect(() => {
-    const fetchData = async () => {
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+    fetchData()
+  }, [workspaceSlug, projectSlug])
 
-      // Get user's super admin status
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("is_super_admin")
-        .eq("id", user.id)
-        .single()
-      
-      setIsSuperAdmin(profile?.is_super_admin || false)
+  const fetchData = async () => {
+    setIsLoading(true)
+    
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setIsLoading(false)
+      return
+    }
 
-      // Get workspace
-      const { data: workspaceData } = await supabase
-        .from("workspaces")
-        .select("*")
-        .eq("slug", workspaceSlug)
-        .single()
+    // Get user's super admin status
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_super_admin")
+      .eq("id", user.id)
+      .single()
+    
+    setIsSuperAdmin(profile?.is_super_admin || false)
 
-      if (!workspaceData) return
-      setWorkspace(workspaceData)
+    // Get workspace
+    const { data: workspaceData } = await supabase
+      .from("workspaces")
+      .select("*")
+      .eq("slug", workspaceSlug)
+      .single()
 
-      // Get workspace role
-      const { data: wsMemberData } = await supabase
-        .from("workspace_members")
+    if (!workspaceData) {
+      setIsLoading(false)
+      return
+    }
+    setWorkspace(workspaceData)
+
+    // Get workspace role
+    const { data: wsMemberData } = await supabase
+      .from("workspace_members")
+      .select("role")
+      .eq("workspace_id", workspaceData.id)
+      .eq("user_id", user.id)
+      .single()
+
+    setWorkspaceRole(wsMemberData?.role || null)
+
+    // Get project
+    const { data: projectData } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("workspace_id", workspaceData.id)
+      .eq("slug", projectSlug)
+      .single()
+
+    if (projectData) {
+      setProject(projectData)
+      setName(projectData.name)
+      setDescription(projectData.description || "")
+      setIsArchived(projectData.is_archived || false)
+
+      // Get project role
+      const { data: projMemberData } = await supabase
+        .from("project_members")
         .select("role")
-        .eq("workspace_id", workspaceData.id)
+        .eq("project_id", projectData.id)
         .eq("user_id", user.id)
         .single()
 
-      setWorkspaceRole(wsMemberData?.role || null)
-
-      // Get project
-      const { data: projectData } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("workspace_id", workspaceData.id)
-        .eq("slug", projectSlug)
-        .single()
-
-      if (projectData) {
-        setProject(projectData)
-        setName(projectData.name)
-        setDescription(projectData.description || "")
-        setIsArchived(projectData.is_archived || false)
-
-        // Get project role
-        const { data: projMemberData } = await supabase
-          .from("project_members")
-          .select("role")
-          .eq("project_id", projectData.id)
-          .eq("user_id", user.id)
-          .single()
-
-        setProjectRole(projMemberData?.role || null)
-      }
+      setProjectRole(projMemberData?.role || null)
     }
-    fetchData()
-  }, [workspaceSlug, projectSlug, supabase])
+    
+    setIsLoading(false)
+  }
 
   const canUpdateSettings = isSuperAdmin || 
     hasProjectPermission(projectRole, "project.settings") ||
@@ -113,13 +127,16 @@ export default function ProjectSettingsPage() {
       return
     }
 
-    setIsLoading(true)
+    setIsSaving(true)
 
     const { data: workspace } = await supabase
       .from("workspaces")
       .select("id")
       .eq("slug", workspaceSlug)
       .single()
+
+    const wasArchived = project?.is_archived
+    const isNowArchived = isArchived
 
     const { error } = await supabase
       .from("projects")
@@ -131,8 +148,31 @@ export default function ProjectSettingsPage() {
       toast.error(error.message)
     } else {
       toast.success("Project updated")
+      
+      // Log archive/unarchive action if changed
+      if (wasArchived !== isNowArchived) {
+        await logAction({
+          workspaceId: workspace?.id,
+          projectId: project?.id,
+          action: isNowArchived ? AuditActions.PROJECT_ARCHIVED : AuditActions.PROJECT_UNARCHIVED,
+          targetType: "project",
+          targetId: project?.id,
+        })
+      }
+      
+      // Log general update if name or description changed
+      if (name !== project?.name || description !== project?.description) {
+        await logAction({
+          workspaceId: workspace?.id,
+          projectId: project?.id,
+          action: AuditActions.PROJECT_UPDATED,
+          targetType: "project",
+          targetId: project?.id,
+          metadata: { name, description },
+        })
+      }
     }
-    setIsLoading(false)
+    setIsSaving(false)
   }
 
   const handleDelete = async () => {
@@ -161,11 +201,52 @@ export default function ProjectSettingsPage() {
       setIsDeleting(false)
     } else {
       toast.success("Project deleted")
+      
+      // Log the action
+      await logAction({
+        workspaceId: workspace?.id,
+        action: AuditActions.PROJECT_DELETED,
+        targetType: "project",
+        targetId: project?.id,
+        metadata: { name: project?.name },
+      })
+      
       router.push(`/workspace/${workspaceSlug}/projects`)
     }
   }
 
-  if (!project) return null
+  if (isLoading) {
+    return (
+      <>
+        <Sidebar workspaceSlug={workspaceSlug} projectSlug={projectSlug} />
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+          <div className="mx-auto max-w-2xl">
+            <Skeleton className="h-10 w-64 mb-6" />
+            <Skeleton className="h-96" />
+          </div>
+        </main>
+      </>
+    )
+  }
+
+  if (!project) {
+    return (
+      <>
+        <Sidebar workspaceSlug={workspaceSlug} projectSlug={projectSlug} />
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+          <div className="mx-auto max-w-2xl text-center">
+            <h1 className="text-3xl font-bold mb-4">Project Not Found</h1>
+            <p className="text-muted-foreground mb-6">
+              The project you're looking for doesn't exist or you don't have access to it.
+            </p>
+            <Button onClick={() => router.push(`/workspace/${workspaceSlug}/projects`)}>
+              Back to Projects
+            </Button>
+          </div>
+        </main>
+      </>
+    )
+  }
 
   return (
     <>
@@ -227,8 +308,8 @@ export default function ProjectSettingsPage() {
                     )}
                   </CardContent>
                   <CardFooter>
-                    <Button type="submit" disabled={isLoading || !canUpdateSettings}>
-                      {isLoading ? "Saving..." : "Save Changes"}
+                    <Button type="submit" disabled={isSaving || !canUpdateSettings}>
+                      {isSaving ? "Saving..." : "Save Changes"}
                     </Button>
                   </CardFooter>
                 </form>

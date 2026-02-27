@@ -9,8 +9,10 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Sidebar } from "@/components/layout/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "sonner"
 import { hasWorkspacePermission } from "@/lib/permissions"
+import { logAction, AuditActions } from "@/lib/audit"
 import type { WorkspaceRole } from "@/lib/constants"
 
 export default function WorkspaceSettingsPage() {
@@ -22,53 +24,60 @@ export default function WorkspaceSettingsPage() {
   const [workspace, setWorkspace] = useState<any>(null)
   const [name, setName] = useState("")
   const [slug, setSlug] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [userRole, setUserRole] = useState<WorkspaceRole | null>(null)
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   useEffect(() => {
-    const fetchData = async () => {
-      // Get current user
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      setCurrentUserId(user.id)
-
-      // Get user's super admin status
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("is_super_admin")
-        .eq("id", user.id)
-        .single()
-      
-      setIsSuperAdmin(profile?.is_super_admin || false)
-
-      // Get workspace
-      const { data: workspaceData } = await supabase
-        .from("workspaces")
-        .select("*")
-        .eq("slug", workspaceSlug)
-        .single()
-      
-      if (workspaceData) {
-        setWorkspace(workspaceData)
-        setName(workspaceData.name)
-        setSlug(workspaceData.slug)
-
-        // Get user's role in this workspace
-        const { data: memberData } = await supabase
-          .from("workspace_members")
-          .select("role")
-          .eq("workspace_id", workspaceData.id)
-          .eq("user_id", user.id)
-          .single()
-
-        setUserRole(memberData?.role || null)
-      }
-    }
     fetchData()
-  }, [workspaceSlug, supabase])
+  }, [workspaceSlug])
+
+  const fetchData = async () => {
+    setIsLoading(true)
+    
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setIsLoading(false)
+      return
+    }
+
+    // Get user's super admin status
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_super_admin")
+      .eq("id", user.id)
+      .single()
+    
+    setIsSuperAdmin(profile?.is_super_admin || false)
+
+    // Get workspace
+    const { data: workspaceData } = await supabase
+      .from("workspaces")
+      .select("*")
+      .eq("slug", workspaceSlug)
+      .single()
+    
+    if (workspaceData) {
+      setWorkspace(workspaceData)
+      setName(workspaceData.name)
+      setSlug(workspaceData.slug)
+
+      // Get user's role in this workspace
+      const { data: memberData } = await supabase
+        .from("workspace_members")
+        .select("role")
+        .eq("workspace_id", workspaceData.id)
+        .eq("user_id", user.id)
+        .single()
+
+      setUserRole(memberData?.role || null)
+    }
+    
+    setIsLoading(false)
+  }
 
   const canUpdateSettings = isSuperAdmin || hasWorkspacePermission(userRole, "workspace.settings")
   const canDelete = isSuperAdmin || hasWorkspacePermission(userRole, "workspace.delete")
@@ -80,7 +89,7 @@ export default function WorkspaceSettingsPage() {
       return
     }
     
-    setIsLoading(true)
+    setIsSaving(true)
 
     const { error } = await supabase
       .from("workspaces")
@@ -91,8 +100,17 @@ export default function WorkspaceSettingsPage() {
       toast.error(error.message)
     } else {
       toast.success("Workspace updated")
+      
+      // Log the action
+      await logAction({
+        workspaceId: workspace?.id,
+        action: AuditActions.WORKSPACE_UPDATED,
+        targetType: "workspace",
+        targetId: workspace?.id,
+        metadata: { name },
+      })
     }
-    setIsLoading(false)
+    setIsSaving(false)
   }
 
   const handleDelete = async () => {
@@ -116,11 +134,51 @@ export default function WorkspaceSettingsPage() {
       setIsDeleting(false)
     } else {
       toast.success("Workspace deleted")
+      
+      // Log the action
+      await logAction({
+        action: AuditActions.WORKSPACE_DELETED,
+        targetType: "workspace",
+        targetId: workspace?.id,
+        metadata: { name: workspace?.name },
+      })
+      
       router.push("/workspace")
     }
   }
 
-  if (!workspace) return null
+  if (isLoading) {
+    return (
+      <>
+        <Sidebar workspaceSlug={workspaceSlug} />
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+          <div className="mx-auto max-w-2xl">
+            <Skeleton className="h-10 w-64 mb-6" />
+            <Skeleton className="h-96" />
+          </div>
+        </main>
+      </>
+    )
+  }
+
+  if (!workspace) {
+    return (
+      <>
+        <Sidebar workspaceSlug={workspaceSlug} />
+        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
+          <div className="mx-auto max-w-2xl text-center">
+            <h1 className="text-3xl font-bold mb-4">Workspace Not Found</h1>
+            <p className="text-muted-foreground mb-6">
+              The workspace you're looking for doesn't exist or you don't have access to it.
+            </p>
+            <Button onClick={() => router.push("/workspace")}>
+              Back to Workspaces
+            </Button>
+          </div>
+        </main>
+      </>
+    )
+  }
 
   return (
     <>
@@ -169,8 +227,8 @@ export default function WorkspaceSettingsPage() {
                     </div>
                   </CardContent>
                   <CardFooter>
-                    <Button type="submit" disabled={isLoading || !canUpdateSettings}>
-                      {isLoading ? "Saving..." : "Save Changes"}
+                    <Button type="submit" disabled={isSaving || !canUpdateSettings}>
+                      {isSaving ? "Saving..." : "Save Changes"}
                     </Button>
                   </CardFooter>
                 </form>
