@@ -14,8 +14,8 @@ interface User {
   id: string
   full_name: string | null
   email: string
-  is_super_admin: boolean
-  created_at: string
+  is_super_admin: boolean | null
+  created_at: string | null
   workspaces: { count: number }[]
 }
 

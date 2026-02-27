@@ -23,7 +23,7 @@ interface Project {
   name: string
   slug: string
   description: string | null
-  is_archived: boolean
+  is_archived: boolean | null
 }
 
 export default function ProjectsPage() {

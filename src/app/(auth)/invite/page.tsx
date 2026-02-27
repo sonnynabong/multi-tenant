@@ -1,14 +1,15 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "sonner"
 import Link from "next/link"
+import { Skeleton } from "@/components/ui/skeleton"
 
-export default function AcceptInvitePage() {
+function AcceptInviteContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const supabase = createClient()
@@ -36,6 +37,12 @@ export default function AcceptInvitePage() {
   const fetchInvitation = async () => {
     setIsLoading(true)
     
+    if (!token) {
+      setError("Invalid invitation link")
+      setIsLoading(false)
+      return
+    }
+    
     const { data: invitationData } = await supabase
       .from("workspace_invitations")
       .select(`
@@ -52,7 +59,7 @@ export default function AcceptInvitePage() {
     }
 
     // Check if invitation is expired
-    if (new Date(invitationData.expires_at) < new Date()) {
+    if (invitationData.expires_at && new Date(invitationData.expires_at) < new Date()) {
       setError("This invitation has expired")
       setIsLoading(false)
       return
@@ -151,8 +158,10 @@ export default function AcceptInvitePage() {
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
         <Card className="w-full max-w-md">
-          <CardContent className="pt-6">
-            <p className="text-center text-muted-foreground">Loading invitation...</p>
+          <CardContent className="pt-6 space-y-4">
+            <Skeleton className="h-8 w-3/4" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-24" />
           </CardContent>
         </Card>
       </div>
@@ -241,5 +250,23 @@ export default function AcceptInvitePage() {
         </CardFooter>
       </Card>
     </div>
+  )
+}
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-md">
+          <CardContent className="pt-6 space-y-4">
+            <Skeleton className="h-8 w-3/4" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-24" />
+          </CardContent>
+        </Card>
+      </div>
+    }>
+      <AcceptInviteContent />
+    </Suspense>
   )
 }
