@@ -12,7 +12,7 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { toast } from "sonner"
 import { WORKSPACE_ROLES } from "@/lib/constants"
 import type { WorkspaceRole } from "@/lib/constants"
-import { PermissionGate } from "@/components/shared/permission-gate"
+import { logAction, AuditActions } from "@/lib/audit"
 
 interface Member {
   id: string
@@ -101,24 +101,39 @@ export default function WorkspaceMembersPage() {
 
     if (!workspace) return
 
-    const { error } = await supabase
+    const { data: invitation, error } = await supabase
       .from("workspace_invitations")
       .insert({
         workspace_id: workspace.id,
         email,
         role,
       })
+      .select()
+      .single()
 
     if (error) {
       toast.error(error.message)
     } else {
       toast.success("Invitation sent")
       setEmail("")
+      
+      // Log the action
+      await logAction({
+        workspaceId: workspace.id,
+        action: AuditActions.MEMBER_INVITED,
+        targetType: "invitation",
+        targetId: invitation?.id,
+        metadata: { email, role },
+      })
     }
     setIsInviting(false)
   }
 
-  const handleUpdateRole = async (memberId: string, newRole: WorkspaceRole) => {
+  const handleUpdateRole = async (memberId: string, userId: string, newRole: WorkspaceRole) => {
+    // Get current role for logging
+    const member = members.find(m => m.id === memberId)
+    const oldRole = member?.role
+
     const { error } = await supabase
       .from("workspace_members")
       .update({ role: newRole })
@@ -129,6 +144,15 @@ export default function WorkspaceMembersPage() {
     } else {
       toast.success("Role updated")
       if (workspace) fetchMembers(workspace.id)
+      
+      // Log the action
+      await logAction({
+        workspaceId: workspace?.id,
+        action: AuditActions.MEMBER_ROLE_CHANGED,
+        targetType: "member",
+        targetId: userId,
+        metadata: { old_role: oldRole, new_role: newRole },
+      })
     }
   }
 
@@ -151,6 +175,14 @@ export default function WorkspaceMembersPage() {
     } else {
       toast.success("Member removed")
       if (workspace) fetchMembers(workspace.id)
+      
+      // Log the action
+      await logAction({
+        workspaceId: workspace?.id,
+        action: AuditActions.MEMBER_REMOVED,
+        targetType: "member",
+        targetId: userId,
+      })
     }
   }
 
@@ -240,7 +272,7 @@ export default function WorkspaceMembersPage() {
                       {canManageRoles && member.user_id !== currentUserId ? (
                         <Select
                           value={member.role}
-                          onValueChange={(v) => handleUpdateRole(member.id, v as WorkspaceRole)}
+                          onValueChange={(v) => handleUpdateRole(member.id, member.user_id, v as WorkspaceRole)}
                         >
                           <SelectTrigger className="w-32">
                             <SelectValue />
@@ -271,6 +303,12 @@ export default function WorkspaceMembersPage() {
                     </div>
                   </div>
                 ))}
+                
+                {members.length === 0 && (
+                  <p className="text-center text-muted-foreground py-8">
+                    No members found in this workspace
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
