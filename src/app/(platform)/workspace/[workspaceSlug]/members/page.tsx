@@ -97,9 +97,13 @@ export default function WorkspaceMembersPage() {
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (!workspace) {
+      toast.error("Workspace not found")
+      return
+    }
+    
     setIsInviting(true)
-
-    if (!workspace) return
 
     const { data: invitation, error } = await supabase
       .from("workspace_invitations")
