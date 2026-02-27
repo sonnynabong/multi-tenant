@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,13 +10,17 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
 
-export function LoginForm() {
+function LoginFormContent() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+  
+  // Get redirect URL from query params
+  const redirectTo = searchParams.get("redirect")
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -35,7 +39,13 @@ export function LoginForm() {
     }
 
     toast.success("Logged in successfully")
-    router.push("/workspace")
+    
+    // Redirect to the specified URL or default to /workspace
+    if (redirectTo) {
+      router.push(redirectTo)
+    } else {
+      router.push("/workspace")
+    }
     router.refresh()
   }
 
@@ -83,5 +93,24 @@ export function LoginForm() {
         </CardFooter>
       </form>
     </Card>
+  )
+}
+
+export function LoginForm() {
+  return (
+    <Suspense fallback={
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Sign In</CardTitle>
+          <CardDescription>Loading...</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="h-10 bg-muted rounded animate-pulse" />
+          <div className="h-10 bg-muted rounded animate-pulse" />
+        </CardContent>
+      </Card>
+    }>
+      <LoginFormContent />
+    </Suspense>
   )
 }

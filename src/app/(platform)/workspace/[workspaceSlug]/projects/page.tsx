@@ -123,10 +123,14 @@ export default function ProjectsPage() {
       return
     }
     
-    setIsCreating(true)
-
     const { data: { user } } = await supabase.auth.getUser()
-    if (!workspace || !user) return
+    if (!workspace || !user) {
+      toast.error("Session expired. Please sign in again.")
+      setIsCreating(false)
+      return
+    }
+    
+    setIsCreating(true)
 
     const { data: project, error } = await supabase
       .from("projects")

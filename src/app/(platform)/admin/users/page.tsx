@@ -13,7 +13,6 @@ import { Shield, ShieldOff } from "lucide-react"
 interface User {
   id: string
   full_name: string | null
-  email: string
   is_super_admin: boolean | null
   created_at: string | null
   workspaces: { count: number }[]
@@ -32,14 +31,15 @@ export default function AdminUsersPage() {
   const fetchUsers = async () => {
     setIsLoading(true)
     
-    // Get all profiles
+    // Get all profiles with workspace counts
     const { data: profilesData } = await supabase
       .from("profiles")
       .select(`
         id,
         full_name,
         is_super_admin,
-        created_at
+        created_at,
+        workspaces:workspace_members(count)
       `)
       .order("created_at", { ascending: false })
 
@@ -48,40 +48,35 @@ export default function AdminUsersPage() {
       return
     }
 
-    // Get workspace counts for each user
-    const usersWithCounts = await Promise.all(
-      profilesData.map(async (profile) => {
-        const { count } = await supabase
-          .from("workspace_members")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", profile.id)
-
-        // Get user email from auth
-        const { data: { user } } = await supabase.auth.getUser()
-        
-        return {
-          ...profile,
-          email: user?.email || "-",
-          workspaces: [{ count: count || 0 }],
-        }
-      })
-    )
-
-    setUsers(usersWithCounts)
+    setUsers(profilesData as unknown as User[])
     setIsLoading(false)
   }
 
   const toggleSuperAdmin = async (userId: string, currentStatus: boolean) => {
     setUpdatingId(userId)
     
-    const { error } = await supabase
-      .from("profiles")
-      .update({ is_super_admin: !currentStatus })
-      .eq("id", userId)
+    // Call the Edge Function to update super admin status
+    // This bypasses RLS since Edge Functions use the service role key
+    const { data: { session } } = await supabase.auth.getSession()
+    
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/admin-toggle-super-admin`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId,
+          isSuperAdmin: !currentStatus,
+        }),
+      })
 
-    if (error) {
-      toast.error(error.message)
-    } else {
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to update user')
+      }
+
       toast.success(
         currentStatus 
           ? "User demoted from super admin" 
@@ -97,6 +92,8 @@ export default function AdminUsersPage() {
       })
       
       fetchUsers()
+    } catch (error: any) {
+      toast.error(error.message)
     }
     
     setUpdatingId(null)
@@ -147,7 +144,7 @@ export default function AdminUsersPage() {
                     <TableCell className="font-mono text-xs">
                       {user.id.slice(0, 8)}...
                     </TableCell>
-                    <TableCell>{user.workspaces?.[0]?.count || 0}</TableCell>
+                    <TableCell>{(user.workspaces as any)?.[0]?.count || 0}</TableCell>
                     <TableCell>
                       {user.is_super_admin ? (
                         <Badge variant="default" className="bg-yellow-500 hover:bg-yellow-600">
@@ -159,7 +156,7 @@ export default function AdminUsersPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {new Date(user.created_at!).toLocaleDateString()}
+                      {user.created_at ? new Date(user.created_at).toLocaleDateString() : "-"}
                     </TableCell>
                     <TableCell>
                       <Button

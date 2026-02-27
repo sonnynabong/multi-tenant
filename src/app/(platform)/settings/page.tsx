@@ -16,7 +16,6 @@ export default function SettingsPage() {
   const router = useRouter()
   const supabase = createClient()
   
-  const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isChangingPassword, setIsChangingPassword] = useState(false)
@@ -47,7 +46,6 @@ export default function SettingsPage() {
       setPasswordError(error.message)
     } else {
       toast.success("Password updated successfully")
-      setCurrentPassword("")
       setNewPassword("")
       setConfirmPassword("")
     }

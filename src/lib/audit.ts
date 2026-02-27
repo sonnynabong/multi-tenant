@@ -9,23 +9,45 @@ interface AuditLogEntry {
   metadata?: Record<string, any>
 }
 
+// Cache for IP address to avoid repeated fetches
+let cachedIp: string | null = null
+let ipFetchPromise: Promise<string | null> | null = null
+
+async function getIpAddress(): Promise<string | null> {
+  // Return cached IP if available
+  if (cachedIp) return cachedIp
+  
+  // Return existing promise if fetch is in progress
+  if (ipFetchPromise) return ipFetchPromise
+  
+  // Start a new fetch but don't await it - fire and forget
+  ipFetchPromise = fetch("https://api.ipify.org?format=json", {
+    // Short timeout to avoid blocking
+    signal: AbortSignal.timeout(2000)
+  })
+    .then(res => res.json())
+    .then(data => {
+      cachedIp = data.ip
+      return data.ip as string
+    })
+    .catch(() => {
+      return null
+    })
+  
+  return ipFetchPromise
+}
+
 export async function logAction(entry: AuditLogEntry) {
   const supabase = createClient()
   
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return
 
-  // Get IP address (this will be the client IP)
-  let ipAddress = null
-  try {
-    const response = await fetch("https://api.ipify.org?format=json")
-    const data = await response.json()
-    ipAddress = data.ip
-  } catch {
-    // Ignore IP fetch errors
-  }
+  // Fire and forget IP fetch - don't block
+  const ipAddress = await getIpAddress()
 
-  const { error } = await supabase
+  // Insert without awaiting to make it non-blocking
+  supabase
     .from("audit_logs")
     .insert({
       workspace_id: entry.workspaceId || null,
@@ -37,10 +59,11 @@ export async function logAction(entry: AuditLogEntry) {
       metadata: entry.metadata || {},
       ip_address: ipAddress,
     })
-
-  if (error) {
-    console.error("Failed to log audit entry:", error)
-  }
+    .then(({ error }) => {
+      if (error) {
+        console.error("Failed to log audit entry:", error)
+      }
+    })
 }
 
 // Predefined audit actions
