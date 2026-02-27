@@ -225,6 +225,9 @@ CREATE POLICY "Users can view any profile"
 CREATE POLICY "Users can update own profile"
   ON public.profiles FOR UPDATE USING (auth.uid() = id);
 
+CREATE POLICY "Super admins can update any profile"
+  ON public.profiles FOR UPDATE USING (public.is_super_admin());
+
 -- ============================================================
 -- RLS POLICIES: WORKSPACES
 -- ============================================================
@@ -403,3 +406,6 @@ CREATE POLICY "Workspace owner/admin can view workspace audit logs"
   ON public.audit_logs FOR SELECT USING (
     public.get_workspace_role(workspace_id) IN ('owner', 'admin')
   );
+
+CREATE POLICY "Authenticated users can insert audit logs"
+  ON public.audit_logs FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);

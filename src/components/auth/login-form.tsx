@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,6 +16,7 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -35,7 +36,8 @@ export function LoginForm() {
     }
 
     toast.success("Logged in successfully")
-    router.push("/workspace")
+    const redirectUrl = searchParams.get("redirect") || "/workspace"
+    router.push(redirectUrl)
     router.refresh()
   }
 

@@ -13,7 +13,6 @@ import { Shield, ShieldOff } from "lucide-react"
 interface User {
   id: string
   full_name: string | null
-  email: string
   is_super_admin: boolean | null
   created_at: string | null
   workspaces: { count: number }[]
@@ -55,13 +54,9 @@ export default function AdminUsersPage() {
           .from("workspace_members")
           .select("*", { count: "exact", head: true })
           .eq("user_id", profile.id)
-
-        // Get user email from auth
-        const { data: { user } } = await supabase.auth.getUser()
         
         return {
           ...profile,
-          email: user?.email || "-",
           workspaces: [{ count: count || 0 }],
         }
       })

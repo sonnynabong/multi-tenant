@@ -15,16 +15,6 @@ export async function logAction(entry: AuditLogEntry) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return
 
-  // Get IP address (this will be the client IP)
-  let ipAddress = null
-  try {
-    const response = await fetch("https://api.ipify.org?format=json")
-    const data = await response.json()
-    ipAddress = data.ip
-  } catch {
-    // Ignore IP fetch errors
-  }
-
   const { error } = await supabase
     .from("audit_logs")
     .insert({
@@ -35,7 +25,7 @@ export async function logAction(entry: AuditLogEntry) {
       target_type: entry.targetType || null,
       target_id: entry.targetId || null,
       metadata: entry.metadata || {},
-      ip_address: ipAddress,
+      ip_address: null,
     })
 
   if (error) {

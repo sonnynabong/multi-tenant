@@ -122,11 +122,11 @@ export default function ProjectsPage() {
       toast.error("You don't have permission to create projects")
       return
     }
-    
-    setIsCreating(true)
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!workspace || !user) return
+    
+    setIsCreating(true)
 
     const { data: project, error } = await supabase
       .from("projects")
