@@ -1,4 +1,5 @@
 import { createClient } from "./supabase/client"
+import type { Json } from "@/types/database"
 
 interface AuditLogEntry {
   workspaceId?: string
@@ -6,7 +7,7 @@ interface AuditLogEntry {
   action: string
   targetType?: string
   targetId?: string
-  metadata?: Record<string, any>
+  metadata?: Json
 }
 
 // Cache for IP address to avoid repeated fetches
