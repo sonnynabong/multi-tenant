@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
+import type { User } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
+import type { Database } from "@/types/database"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,13 +13,15 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { toast } from "sonner"
 import { Upload } from "lucide-react"
 
+type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"]
+
 export default function ProfilePage() {
   const router = useRouter()
   const supabase = createClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
   
-  const [user, setUser] = useState<any>(null)
-  const [profile, setProfile] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [profile, setProfile] = useState<ProfileRow | null>(null)
   const [fullName, setFullName] = useState("")
   const [email, setEmail] = useState("")
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
@@ -45,7 +49,7 @@ export default function ProfilePage() {
       .single()
 
     if (profileData) {
-      setProfile(profileData)
+      setProfile(profileData as ProfileRow)
       setFullName(profileData.full_name || "")
       setAvatarUrl(profileData.avatar_url)
     }
@@ -54,6 +58,8 @@ export default function ProfilePage() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
+
+    if (!user) return
 
     const { error } = await supabase
       .from("profiles")
@@ -92,6 +98,8 @@ export default function ProfilePage() {
     }
 
     setIsUploading(true)
+
+    if (!user) return
 
     try {
       // Upload to Supabase Storage
@@ -144,8 +152,8 @@ export default function ProfilePage() {
 
       setAvatarUrl(publicUrl)
       toast.success("Avatar updated")
-    } catch (error: any) {
-      toast.error(error.message)
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Something went wrong")
     } finally {
       setIsUploading(false)
     }
