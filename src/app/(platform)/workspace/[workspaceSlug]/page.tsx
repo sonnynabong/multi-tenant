@@ -29,11 +29,17 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
     notFound()
   }
 
-  // Then get members separately
-  const { data: members } = await supabase
+  const { count: memberCount } = await supabase
+    .from("workspace_members")
+    .select("*", { count: "exact", head: true })
+    .eq("workspace_id", workspace.id)
+
+  const { data: myMembership } = await supabase
     .from("workspace_members")
     .select("role")
     .eq("workspace_id", workspace.id)
+    .eq("user_id", user.id)
+    .maybeSingle()
 
   // Get projects
   const { data: projects } = await supabase
@@ -70,7 +76,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {members?.length || 0}
+                  {memberCount ?? 0}
                 </div>
               </CardContent>
             </Card>
@@ -90,7 +96,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold capitalize">
-                  {members?.[0]?.role || "Member"}
+                  {myMembership?.role ?? "Member"}
                 </div>
               </CardContent>
             </Card>
