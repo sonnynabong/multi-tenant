@@ -36,8 +36,16 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Redirect unauthenticated users
-  if (!user && request.nextUrl.pathname.startsWith("/workspace")) {
+  const path = request.nextUrl.pathname;
+  const requiresAuth =
+    path.startsWith("/workspace") ||
+    path.startsWith("/profile") ||
+    path.startsWith("/settings") ||
+    path.startsWith("/onboarding") ||
+    path.startsWith("/admin");
+
+  // Redirect unauthenticated users away from authenticated app routes
+  if (!user && requiresAuth) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
