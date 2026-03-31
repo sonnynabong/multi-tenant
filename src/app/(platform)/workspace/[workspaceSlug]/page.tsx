@@ -14,7 +14,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
   const supabase = await createClient()
   
   // Get current user
-  const { data: { user }, error: userError } = await supabase.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect("/login")
 
   // First get the workspace
