@@ -1,13 +1,13 @@
 # Multi-Tenant SaaS Boilerplate
 
-A production-ready **multi-tenant SaaS boilerplate** built with **Next.js 14+**, **Supabase**, and **shadcn/ui**. Features a complete three-tier hierarchy (Super Admin → Workspace → Project) with granular role-based access control, Row-Level Security, and a modern UI.
+A production-ready **multi-tenant SaaS boilerplate** built with **Next.js 16** (App Router), **Supabase**, and **shadcn/ui**. Features a complete three-tier hierarchy (Super Admin → Workspace → Project) with granular role-based access control, Row-Level Security, and a modern UI.
 
 ## 🚀 Features
 
 - **🏢 Three-Tier Hierarchy**: Super Admin → Workspace → Project
 - **🔐 Role-Based Access Control**: 6 workspace roles + 5 project roles
 - **🛡️ Row-Level Security (RLS)**: Database-level security with PostgreSQL policies
-- **⚡ Next.js 14+**: App Router, Server Components, Server Actions
+- **⚡ Next.js 16**: App Router, Server Components, Server Actions
 - **🎨 Modern UI**: shadcn/ui + Tailwind CSS + Radix UI
 - **🔑 Authentication**: Supabase Auth with email/password
 - **📊 Audit Logging**: Track all platform activities
@@ -247,7 +247,7 @@ if (checkWorkspace("workspace.delete")) {
 
 | Technology | Purpose |
 |------------|---------|
-| **Next.js 14+** | React framework with App Router |
+| **Next.js 16** | React framework with App Router |
 | **Supabase** | Database, Auth, Realtime |
 | **PostgreSQL** | Relational database |
 | **shadcn/ui** | UI component library |
@@ -259,11 +259,11 @@ if (checkWorkspace("workspace.delete")) {
 
 ```json
 {
-  "next": "^14.x",
-  "@supabase/ssr": "^0.x",
+  "next": "16.x",
+  "@supabase/ssr": "^0.8.x",
   "@supabase/supabase-js": "^2.x",
-  "@radix-ui/*": "latest",
-  "tailwindcss": "^3.x",
+  "radix-ui": "^1.x",
+  "tailwindcss": "^4.x",
   "typescript": "^5.x"
 }
 ```
