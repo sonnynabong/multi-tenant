@@ -75,7 +75,7 @@ A production-ready **multi-tenant SaaS boilerplate** built with **Next.js 16** (
 │   ├── constants.ts              # Role definitions
 │   └── permissions.ts            # Permission utilities
 ├── types/database.ts             # TypeScript types
-├── middleware.ts                 # Next.js middleware
+├── src/proxy.ts                   # Next.js 16 proxy (auth + routing; replaces middleware)
 └── supabase/
     └── schema.sql                # Complete database schema
 ```
