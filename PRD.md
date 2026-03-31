@@ -4,7 +4,7 @@
 
 Build a **production-ready multi-tenant SaaS application** using:
 
-- **Next.js 14+** (App Router)
+- **Next.js 16** (App Router). Request interception uses the **`proxy.ts`** file convention (Node.js runtime), which replaces the deprecated `middleware.ts` name in Next.js 16.
 - **Supabase** (Auth, Database via PostgreSQL, Row-Level Security, Edge Functions)
 - **shadcn/ui** components (with Radix UI primitives + Tailwind CSS)
 - **TypeScript** throughout
@@ -419,11 +419,16 @@ src/
 │   │   ├── login/page.tsx
 │   │   ├── signup/page.tsx
 │   │   ├── forgot-password/page.tsx
+│   │   ├── invite/page.tsx
 │   │   └── layout.tsx
 │   │
 │   ├── (platform)/
 │   │   ├── layout.tsx                         # Authenticated layout
+│   │   ├── loading.tsx                        # Segment loading UI
+│   │   ├── error.tsx                          # Segment error boundary
 │   │   ├── onboarding/page.tsx                # Create first workspace
+│   │   ├── profile/page.tsx
+│   │   ├── settings/page.tsx
 │   │   │
 │   │   ├── workspace/
 │   │   │   ├── page.tsx                       # Workspace selector / list
@@ -505,7 +510,7 @@ src/
 │   │   ├── client.ts                          # Browser client
 │   │   ├── server.ts                          # Server client (cookies)
 │   │   ├── admin.ts                           # Service role client
-│   │   └── middleware.ts                      # Auth middleware helper
+│   │   └── middleware.ts                      # Optional `updateSession()` helper (Supabase SSR)
 │   ├── permissions.ts                         # Permission checking utilities
 │   ├── constants.ts                           # Role & permission constants
 │   └── utils.ts
@@ -523,7 +528,7 @@ src/
 │   ├── project.ts
 │   └── permissions.ts
 │
-└── middleware.ts                               # Next.js middleware for auth + routing
+└── proxy.ts                                    # Next.js 16 proxy: auth session + route protection
 ```
 
 ---
@@ -615,46 +620,65 @@ export function PermissionGate({
 // </PermissionGate>
 ```
 
-### 4.3 — Middleware (Auth + Workspace Resolution)
+### 4.3 — Proxy (Auth + Route Protection)
+
+In Next.js 16, use **`src/proxy.ts`** with a named export **`proxy`** (not `middleware`). The Supabase SSR client uses the `getAll` / `setAll` cookie API. Unauthenticated users are redirected from `/workspace`, `/profile`, `/settings`, `/onboarding`, and `/admin`; `/admin` additionally requires `profiles.is_super_admin`.
 
 ```typescript
-// middleware.ts
+// src/proxy.ts
 
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request: { headers: request.headers } });
+export async function proxy(request: NextRequest) {
+  let supabaseResponse = NextResponse.next({
+    request,
+  });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get: (name) => request.cookies.get(name)?.value,
-        set: (name, value, options) => {
-          response.cookies.set({ name, value, ...options });
+        getAll() {
+          return request.cookies.getAll();
         },
-        remove: (name, options) => {
-          response.cookies.set({ name, value: "", ...options });
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            request.cookies.set(name, value)
+          );
+          supabaseResponse = NextResponse.next({
+            request,
+          });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          );
         },
       },
     }
   );
 
-  const { data: { user } } = await supabase.auth.getUser();
+  // Keep logic minimal between createServerClient and getUser() (session refresh).
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  // Redirect unauthenticated users
-  if (!user && request.nextUrl.pathname.startsWith("/workspace")) {
+  const path = request.nextUrl.pathname;
+  const requiresAuth =
+    path.startsWith("/workspace") ||
+    path.startsWith("/profile") ||
+    path.startsWith("/settings") ||
+    path.startsWith("/onboarding") ||
+    path.startsWith("/admin");
+
+  if (!user && requiresAuth) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Redirect authenticated users away from auth pages
   if (user && ["/login", "/signup"].includes(request.nextUrl.pathname)) {
     return NextResponse.redirect(new URL("/workspace", request.url));
   }
 
-  // Super admin route protection
   if (request.nextUrl.pathname.startsWith("/admin")) {
     if (!user) return NextResponse.redirect(new URL("/login", request.url));
 
@@ -669,7 +693,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  return response;
+  return supabaseResponse;
 }
 
 export const config = {
@@ -677,28 +701,32 @@ export const config = {
 };
 ```
 
-### 4.4 — Workspace Context Hook
+### 4.4 — Workspace Hook (fetch by ID)
+
+The implementation uses **`useWorkspace(workspaceId)`** in `src/hooks/use-workspace.ts`: a client hook that loads a workspace (with nested members and profiles) by **workspace id** when `workspaceId` is defined. It uses a stable Supabase client ref and `useEffect` dependency on `workspaceId` only—not a React context provider as in some alternate designs.
 
 ```typescript
-// hooks/use-workspace.ts
+// Pattern (abbreviated): src/hooks/use-workspace.ts
 
 "use client";
 
-import { createContext, useContext } from "react";
+import { useEffect, useState, useRef } from "react";
+import { createClient } from "@/lib/supabase/client";
 
-interface WorkspaceContext {
-  workspace: Workspace;
-  role: WorkspaceRole;
-  members: WorkspaceMember[];
-  isLoading: boolean;
-}
+export function useWorkspace(workspaceId?: string) {
+  const [workspace, setWorkspace] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const supabaseRef = useRef(createClient());
 
-const WorkspaceCtx = createContext<WorkspaceContext | null>(null);
+  useEffect(() => {
+    if (!workspaceId) {
+      setIsLoading(false);
+      return;
+    }
+    // fetch .from("workspaces").select("*, members:workspace_members(...)") ...
+  }, [workspaceId]);
 
-export function useWorkspace() {
-  const ctx = useContext(WorkspaceCtx);
-  if (!ctx) throw new Error("useWorkspace must be used within WorkspaceProvider");
-  return ctx;
+  return { workspace, isLoading, error };
 }
 ```
 
@@ -806,7 +834,7 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_...
 
 ## 8. Implementation Order
 
-1. **Phase 1 — Auth & Profiles**: Supabase auth, login/signup pages, profile management, middleware
+1. **Phase 1 — Auth & Profiles**: Supabase auth, login/signup pages, profile management, `proxy.ts` session + redirects
 2. **Phase 2 — Workspaces**: Create workspace, workspace list/switcher, workspace settings, member management + invitations
 3. **Phase 3 — Projects**: CRUD projects within workspace, project members, project settings
 4. **Phase 4 — Permissions & RLS**: Implement all RLS policies, permission gate component, role-based UI rendering
@@ -817,7 +845,7 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_...
 
 ## 9. Prompt Summary
 
-> Build a multi-tenant SaaS platform using **Next.js 14+ App Router**, **Supabase** (Auth, PostgreSQL, RLS, Realtime), and **shadcn/ui** components. The platform has three hierarchy levels:
+> Build a multi-tenant SaaS platform using **Next.js 16 App Router** (`proxy.ts` for auth/routing), **Supabase** (Auth, PostgreSQL, RLS, Realtime), and **shadcn/ui** components. The platform has three hierarchy levels:
 >
 > - **Super Admin** (platform-wide control)
 > - **Workspace** (tenant boundary with Owner, Admin, Manager, Member, Viewer, Billing Admin roles)
@@ -835,7 +863,7 @@ This section documents the actual implementation status and any deviations from 
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Auth (login/signup/forgot-password) | ✅ Complete | All auth flows working |
+| Auth (login/signup/forgot-password/invite) | ✅ Complete | Email/password + invite acceptance flow |
 | Database schema | ✅ Complete | All tables, enums, indexes |
 | RLS policies | ✅ Complete | Fixed recursion issues, security hardened |
 | Helper functions | ✅ Complete | `is_super_admin()`, `get_workspace_role()`, `get_project_role()` |
@@ -845,7 +873,7 @@ This section documents the actual implementation status and any deviations from 
 | Project CRUD | ✅ Complete | Create, list, settings, delete |
 | Admin panel | ✅ Complete | Dashboard, workspaces list, users list, audit log |
 | Permission system | ✅ Complete | `permissions.ts`, `usePermissions`, `PermissionGate` |
-| Middleware | ✅ Complete | Auth routing, super admin protection |
+| Proxy (`src/proxy.ts`) | ✅ Complete | Session refresh, auth redirects, super admin protection |
 | Analytics page | ✅ Complete | Basic workspace analytics |
 | Landing page | ✅ Complete | Marketing page with navigation |
 
@@ -857,10 +885,12 @@ This section documents the actual implementation status and any deviations from 
 | `/workspace/[slug]/settings/billing` | ❌ Not implemented | Out of scope for MVP |
 | `/workspace/[slug]/settings/roles` | ❌ Not implemented | Custom roles out of scope |
 | `/workspace/[slug]/audit-log` | ❌ Not implemented | Only global admin audit log |
-| `/workspace/[slug]/project/[slug]/members` | ❌ Not implemented | Future enhancement |
+| `/workspace/[slug]/project/[slug]/members` | ✅ Implemented | Project member management |
 | `lib/supabase/admin.ts` | ❌ Not implemented | Service role not needed for client-side |
 | `hooks/use-realtime.ts` | ❌ Not implemented | Realtime subscriptions not implemented |
 | `types/workspace.ts`, etc. | Consolidated in `database.ts` + `constants.ts` | Simpler type management |
+| `middleware.ts` (root) | **`src/proxy.ts`** with export `proxy` | Next.js 16 renames middleware → proxy (Node.js runtime) |
+| All UI under `src/components/` | **`components/ui/`** at repo root + **`src/components/`** for app | shadcn/ui default layout; `@/*` resolves both |
 
 ### 📁 Additional Files Created (Outside PRD Scope)
 
@@ -871,6 +901,8 @@ This section documents the actual implementation status and any deviations from 
 | `/README.md` | Comprehensive boilerplate documentation |
 | `/src/app/(platform)/workspace/[workspaceSlug]/analytics/page.tsx` | Analytics dashboard |
 | `/src/app/page.tsx` | Landing/marketing page |
+| `/src/proxy.ts` | Next.js 16 proxy (session + redirects) |
+| `/src/app/(platform)/loading.tsx`, `error.tsx` | Segment loading UI and error boundary |
 
 ### 🔧 RLS Policy Changes
 
@@ -907,6 +939,7 @@ The application is **production-ready** with:
 - ✅ Working multi-tenant hierarchy
 - ✅ Admin panel
 - ✅ Modern UI with shadcn/ui
+- ✅ Next.js 16 **`proxy.ts`** for authenticated routes and super-admin gating
 
 Missing for full PRD compliance (future phases):
 - Billing integration
