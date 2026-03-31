@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import type { Workspace, WorkspaceMember, Profile } from "@/types/database"
 
@@ -12,7 +12,7 @@ export function useWorkspace(workspaceId?: string) {
   const [workspace, setWorkspace] = useState<WorkspaceWithMembers | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
-  const supabase = createClient()
+  const supabaseRef = useRef(createClient())
 
   useEffect(() => {
     if (!workspaceId) {
@@ -22,7 +22,7 @@ export function useWorkspace(workspaceId?: string) {
 
     const fetchWorkspace = async () => {
       try {
-        const { data: workspace, error } = await supabase
+        const { data: workspace, error } = await supabaseRef.current
           .from("workspaces")
           .select("*, members:workspace_members(*, profile:profiles(*))")
           .eq("id", workspaceId)
@@ -38,7 +38,7 @@ export function useWorkspace(workspaceId?: string) {
     }
 
     fetchWorkspace()
-  }, [workspaceId, supabase])
+  }, [workspaceId])
 
   return { workspace, isLoading, error }
 }
