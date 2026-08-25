@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sidebar } from "@/components/layout/sidebar"
 import { toast } from "sonner"
-import { PROJECT_ROLES } from "@/lib/constants"
+import { assignableProjectRoles } from "@/lib/constants"
 import type { ProjectRole, WorkspaceRole } from "@/lib/constants"
 import { PermissionGate } from "@/components/shared/permission-gate"
 
@@ -50,86 +50,81 @@ export default function ProjectMembersPage() {
 
   const fetchData = async () => {
     setIsLoading(true)
-    
-    // Get current user
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
 
-    // Get user's super admin status
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("is_super_admin")
-      .eq("id", user.id)
-      .single()
-    
-    setIsSuperAdmin(profile?.is_super_admin || false)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-    // Get workspace
-    const { data: workspaceData } = await supabase
-      .from("workspaces")
-      .select("*")
-      .eq("slug", workspaceSlug)
-      .single()
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("is_super_admin")
+        .eq("id", user.id)
+        .single()
 
-    if (!workspaceData) return
-    setWorkspace(workspaceData)
+      setIsSuperAdmin(profile?.is_super_admin || false)
 
-    // Get user's workspace role
-    const { data: workspaceMemberData } = await supabase
-      .from("workspace_members")
-      .select("role")
-      .eq("workspace_id", workspaceData.id)
-      .eq("user_id", user.id)
-      .single()
+      const { data: workspaceData } = await supabase
+        .from("workspaces")
+        .select("*")
+        .eq("slug", workspaceSlug)
+        .single()
 
-    setCurrentWorkspaceRole(workspaceMemberData?.role || null)
+      if (!workspaceData) return
+      setWorkspace(workspaceData)
 
-    // Get project
-    const { data: projectData } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("workspace_id", workspaceData.id)
-      .eq("slug", projectSlug)
-      .single()
+      const { data: workspaceMemberData } = await supabase
+        .from("workspace_members")
+        .select("role")
+        .eq("workspace_id", workspaceData.id)
+        .eq("user_id", user.id)
+        .single()
 
-    if (!projectData) return
-    setProject(projectData)
+      setCurrentWorkspaceRole(workspaceMemberData?.role || null)
 
-    // Get user's project role
-    const { data: projectMemberData } = await supabase
-      .from("project_members")
-      .select("role")
-      .eq("project_id", projectData.id)
-      .eq("user_id", user.id)
-      .single()
+      const { data: projectData } = await supabase
+        .from("projects")
+        .select("*")
+        .eq("workspace_id", workspaceData.id)
+        .eq("slug", projectSlug)
+        .single()
 
-    setCurrentUserRole(projectMemberData?.role || null)
+      if (!projectData) return
+      setProject(projectData)
 
-    // Get project members
-    const { data: membersData } = await supabase
-      .from("project_members")
-      .select(`
-        id,
-        user_id,
-        role,
-        profile:profiles(full_name)
-      `)
-      .eq("project_id", projectData.id)
+      const { data: projectMemberData } = await supabase
+        .from("project_members")
+        .select("role")
+        .eq("project_id", projectData.id)
+        .eq("user_id", user.id)
+        .single()
 
-    setMembers((membersData as unknown as ProjectMember[]) || [])
+      setCurrentUserRole(projectMemberData?.role || null)
 
-    // Get workspace members not in project
-    const { data: wsMembersData } = await supabase
-      .from("workspace_members")
-      .select(`
-        user_id,
-        role,
-        profile:profiles(full_name)
-      `)
-      .eq("workspace_id", workspaceData.id)
+      const { data: membersData } = await supabase
+        .from("project_members")
+        .select(`
+          id,
+          user_id,
+          role,
+          profile:profiles(full_name)
+        `)
+        .eq("project_id", projectData.id)
 
-    setWorkspaceMembers((wsMembersData as unknown as WorkspaceMember[]) || [])
-    setIsLoading(false)
+      setMembers((membersData as unknown as ProjectMember[]) || [])
+
+      const { data: wsMembersData } = await supabase
+        .from("workspace_members")
+        .select(`
+          user_id,
+          role,
+          profile:profiles(full_name)
+        `)
+        .eq("workspace_id", workspaceData.id)
+
+      setWorkspaceMembers((wsMembersData as unknown as WorkspaceMember[]) || [])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleAddMember = async (userId: string, role: ProjectRole = "viewer") => {
@@ -283,7 +278,7 @@ export default function ProjectMembersPage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {PROJECT_ROLES.map((r) => (
+                              {assignableProjectRoles(currentUserRole, currentWorkspaceRole, isSuperAdmin).map((r) => (
                                 <SelectItem key={r} value={r}>
                                   {r}
                                 </SelectItem>
