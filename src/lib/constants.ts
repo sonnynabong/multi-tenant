@@ -15,6 +15,10 @@ export const PROJECT_ROLES = [
   'viewer',
 ] as const
 
+export const INVITEABLE_WORKSPACE_ROLES = WORKSPACE_ROLES.filter(
+  (role) => role !== "owner"
+)
+
 export type WorkspaceRole = typeof WORKSPACE_ROLES[number]
 export type ProjectRole = typeof PROJECT_ROLES[number]
 

@@ -346,6 +346,27 @@ export type Database = {
         Returns: undefined
       }
       shares_workspace_with: { Args: { other_user_id: string }; Returns: boolean }
+      get_invitation_by_token: {
+        Args: { invite_token: string }
+        Returns: {
+          id: string
+          workspace_id: string
+          workspace_name: string
+          workspace_slug: string
+          email: string
+          role: Database["public"]["Enums"]["workspace_role"]
+          status: Database["public"]["Enums"]["invitation_status"]
+          expires_at: string | null
+        }[]
+      }
+      accept_workspace_invitation: {
+        Args: { invite_token: string }
+        Returns: string
+      }
+      decline_workspace_invitation: {
+        Args: { invite_token: string }
+        Returns: undefined
+      }
     }
     Enums: {
       invitation_status: "pending" | "accepted" | "expired" | "revoked"
