@@ -41,6 +41,7 @@ export default function NewWorkspacePage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       toast.error("Not authenticated")
+      setIsLoading(false)
       return
     }
 
