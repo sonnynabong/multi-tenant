@@ -792,6 +792,10 @@ CREATE POLICY "Workspace owner/admin can view workspace audit logs"
     public.get_workspace_role(workspace_id) IN ('owner', 'admin')
   );
 
+CREATE POLICY "Users can insert their own audit logs"
+  ON public.audit_logs FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
 -- ============================================================
 -- FUNCTION GRANTS
 -- ============================================================
