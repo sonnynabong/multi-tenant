@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sidebar } from "@/components/layout/sidebar"
 import { toast } from "sonner"
-import { PROJECT_ROLES } from "@/lib/constants"
+import { assignableProjectRoles } from "@/lib/constants"
 import type { ProjectRole, WorkspaceRole } from "@/lib/constants"
 import { PermissionGate } from "@/components/shared/permission-gate"
 
@@ -283,7 +283,7 @@ export default function ProjectMembersPage() {
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {PROJECT_ROLES.map((r) => (
+                              {assignableProjectRoles(currentUserRole, currentWorkspaceRole, isSuperAdmin).map((r) => (
                                 <SelectItem key={r} value={r}>
                                   {r}
                                 </SelectItem>

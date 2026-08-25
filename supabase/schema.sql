@@ -425,6 +425,62 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.prevent_last_workspace_owner_loss()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.role = 'owner' AND (
+      SELECT COUNT(*) FROM public.workspace_members
+      WHERE workspace_id = OLD.workspace_id AND role = 'owner'
+    ) <= 1 THEN
+      RAISE EXCEPTION 'Cannot remove the last workspace owner';
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF OLD.role = 'owner' AND NEW.role IS DISTINCT FROM 'owner' AND (
+    SELECT COUNT(*) FROM public.workspace_members
+    WHERE workspace_id = OLD.workspace_id AND role = 'owner'
+  ) <= 1 THEN
+    RAISE EXCEPTION 'Cannot demote the last workspace owner';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.prevent_last_project_owner_loss()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.role = 'owner' AND (
+      SELECT COUNT(*) FROM public.project_members
+      WHERE project_id = OLD.project_id AND role = 'owner'
+    ) <= 1 THEN
+      RAISE EXCEPTION 'Cannot remove the last project owner';
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF OLD.role = 'owner' AND NEW.role IS DISTINCT FROM 'owner' AND (
+    SELECT COUNT(*) FROM public.project_members
+    WHERE project_id = OLD.project_id AND role = 'owner'
+  ) <= 1 THEN
+    RAISE EXCEPTION 'Cannot demote the last project owner';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
 -- ============================================================
 -- TRIGGERS
 -- ============================================================
@@ -444,6 +500,14 @@ CREATE TRIGGER on_project_created
 CREATE TRIGGER protect_is_super_admin
   BEFORE UPDATE ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.protect_is_super_admin();
+
+CREATE TRIGGER prevent_last_workspace_owner_loss
+  BEFORE DELETE OR UPDATE ON public.workspace_members
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_last_workspace_owner_loss();
+
+CREATE TRIGGER prevent_last_project_owner_loss
+  BEFORE DELETE OR UPDATE ON public.project_members
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_last_project_owner_loss();
 
 -- ============================================================
 -- ENABLE RLS
@@ -513,20 +577,44 @@ CREATE POLICY "Only workspace owner can delete"
 CREATE POLICY "Super admins can manage all workspace members"
   ON public.workspace_members FOR ALL USING (public.is_super_admin());
 
-CREATE POLICY "Users can view their workspace memberships"
-  ON public.workspace_members FOR SELECT USING (user_id = auth.uid());
-
-CREATE POLICY "Owners and admins can manage workspace members"
-  ON public.workspace_members FOR ALL USING (
-    public.get_workspace_role(workspace_id) IN ('owner', 'admin')
-  )
-  WITH CHECK (
-    public.get_workspace_role(workspace_id) IN ('owner', 'admin')
+CREATE POLICY "Workspace members can view fellow members"
+  ON public.workspace_members FOR SELECT USING (
+    public.get_workspace_role(workspace_id) IS NOT NULL
   );
 
-CREATE POLICY "Managers can invite workspace members"
+CREATE POLICY "Owners and admins can add workspace members"
   ON public.workspace_members FOR INSERT WITH CHECK (
-    public.get_workspace_role(workspace_id) = 'manager'
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
+  );
+
+CREATE POLICY "Owners and admins can update workspace members"
+  ON public.workspace_members FOR UPDATE
+  USING (
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
+  )
+  WITH CHECK (
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
+  );
+
+CREATE POLICY "Owners and admins can remove workspace members"
+  ON public.workspace_members FOR DELETE USING (
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
   );
 
 CREATE POLICY "Users can leave workspace"
@@ -601,43 +689,92 @@ CREATE POLICY "Super admins can manage all project members"
 
 CREATE POLICY "Project members can view project members"
   ON public.project_members FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.project_members pm
-      WHERE pm.project_id = project_id AND pm.user_id = auth.uid()
-    )
-    OR
-    EXISTS (
+    public.get_project_role(project_id) IS NOT NULL
+    OR EXISTS (
       SELECT 1 FROM public.projects p
-      JOIN public.workspace_members wm ON p.workspace_id = wm.workspace_id
-      WHERE p.id = project_id AND wm.user_id = auth.uid()
-      AND wm.role IN ('owner', 'admin', 'manager')
+      WHERE p.id = project_id
+        AND public.get_workspace_role(p.workspace_id) IN ('owner', 'admin', 'manager')
     )
   );
 
-CREATE POLICY "Workspace owners and admins can manage project members"
-  ON public.project_members FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.projects p
-      JOIN public.workspace_members wm ON p.workspace_id = wm.workspace_id
-      WHERE p.id = project_id AND wm.user_id = auth.uid()
-      AND wm.role IN ('owner', 'admin')
+CREATE POLICY "Owners and admins can add project members"
+  ON public.project_members FOR INSERT WITH CHECK (
+    (
+      public.get_project_role(project_id) = 'owner'
+      OR EXISTS (
+        SELECT 1 FROM public.projects p
+        WHERE p.id = project_id
+          AND public.get_workspace_role(p.workspace_id) IN ('owner', 'admin')
+      )
     )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.projects p
-      JOIN public.workspace_members wm ON p.workspace_id = wm.workspace_id
-      WHERE p.id = project_id AND wm.user_id = auth.uid()
-      AND wm.role IN ('owner', 'admin')
+    AND (
+      role <> 'owner'
+      OR public.get_project_role(project_id) = 'owner'
+      OR EXISTS (
+        SELECT 1 FROM public.projects p
+        WHERE p.id = project_id
+          AND public.get_workspace_role(p.workspace_id) = 'owner'
+      )
     )
   );
 
-CREATE POLICY "Project owners and admins can manage project members"
-  ON public.project_members FOR ALL USING (
-    public.get_project_role(project_id) IN ('owner', 'admin')
+CREATE POLICY "Owners and admins can update project members"
+  ON public.project_members FOR UPDATE
+  USING (
+    public.get_project_role(project_id) = 'owner'
+    OR (
+      public.get_project_role(project_id) = 'admin'
+      AND role <> 'owner'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.projects p
+      WHERE p.id = project_id
+        AND (
+          public.get_workspace_role(p.workspace_id) = 'owner'
+          OR (
+            public.get_workspace_role(p.workspace_id) = 'admin'
+            AND role <> 'owner'
+          )
+        )
+    )
   )
   WITH CHECK (
-    public.get_project_role(project_id) IN ('owner', 'admin')
+    public.get_project_role(project_id) = 'owner'
+    OR (
+      public.get_project_role(project_id) = 'admin'
+      AND role <> 'owner'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.projects p
+      WHERE p.id = project_id
+        AND (
+          public.get_workspace_role(p.workspace_id) = 'owner'
+          OR (
+            public.get_workspace_role(p.workspace_id) = 'admin'
+            AND role <> 'owner'
+          )
+        )
+    )
+  );
+
+CREATE POLICY "Owners and admins can remove project members"
+  ON public.project_members FOR DELETE USING (
+    public.get_project_role(project_id) = 'owner'
+    OR (
+      public.get_project_role(project_id) = 'admin'
+      AND role <> 'owner'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.projects p
+      WHERE p.id = project_id
+        AND (
+          public.get_workspace_role(p.workspace_id) = 'owner'
+          OR (
+            public.get_workspace_role(p.workspace_id) = 'admin'
+            AND role <> 'owner'
+          )
+        )
+    )
   );
 
 CREATE POLICY "Users can leave project"

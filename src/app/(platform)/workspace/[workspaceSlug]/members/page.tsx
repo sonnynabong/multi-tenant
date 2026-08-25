@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sidebar } from "@/components/layout/sidebar"
 import { toast } from "sonner"
-import { WORKSPACE_ROLES, INVITEABLE_WORKSPACE_ROLES } from "@/lib/constants"
+import { INVITEABLE_WORKSPACE_ROLES, assignableWorkspaceRoles } from "@/lib/constants"
 import type { WorkspaceRole } from "@/lib/constants"
 import { logAction, AuditActions } from "@/lib/audit"
 
@@ -212,6 +212,8 @@ export default function WorkspaceMembersPage() {
     currentUserRole === "owner" || 
     currentUserRole === "admin"
 
+  const canManageOwners = isSuperAdmin || currentUserRole === "owner"
+
   return (
     <>
       <Sidebar workspaceSlug={workspaceSlug} />
@@ -304,7 +306,7 @@ export default function WorkspaceMembersPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      {canManageRoles && member.user_id !== currentUserId ? (
+                      {canManageRoles && member.user_id !== currentUserId && (member.role !== "owner" || canManageOwners) ? (
                         <Select
                           value={member.role}
                           onValueChange={(v) => handleUpdateRole(member.id, member.user_id, v as WorkspaceRole)}
@@ -313,7 +315,7 @@ export default function WorkspaceMembersPage() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {WORKSPACE_ROLES.map((r) => (
+                            {assignableWorkspaceRoles(currentUserRole, isSuperAdmin).map((r) => (
                               <SelectItem key={r} value={r}>
                                 {r}
                               </SelectItem>
@@ -326,7 +328,7 @@ export default function WorkspaceMembersPage() {
                         </span>
                       )}
                       
-                      {canRemove && member.user_id !== currentUserId && (
+                      {canRemove && member.user_id !== currentUserId && (member.role !== "owner" || canManageOwners) && (
                         <Button
                           variant="destructive"
                           size="sm"
