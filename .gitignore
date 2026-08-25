@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Cursor hook runtime state (local only, never commit)
+.cursor/hooks/state/continual-learning.json
+.cursor/hooks/state/continual-learning-index.json
