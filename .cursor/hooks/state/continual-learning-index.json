@@ -1,0 +1,27 @@
+{
+    "version":  1,
+    "updatedAtMs":  1787667280683,
+    "transcripts":  {
+                        "C:\\Users\\User\\.cursor\\projects\\k-git-multi-tenant\\agent-transcripts\\95fd1216-26e2-4f63-a140-399ae83d584e\\95fd1216-26e2-4f63-a140-399ae83d584e.jsonl":  {
+                                                                                                                                                                                            "mtimeMs":  1787667211090
+                                                                                                                                                                                        },
+                        "C:\\Users\\User\\.cursor\\projects\\k-git-multi-tenant\\agent-transcripts\\95fd1216-26e2-4f63-a140-399ae83d584e\\subagents\\0cf0e999-5d12-4222-91a2-cc9b4dbe2a9f.jsonl":  {
+                                                                                                                                                                                                       "mtimeMs":  1787667234670
+                                                                                                                                                                                                   },
+                        "C:\\Users\\User\\.cursor\\projects\\k-git-multi-tenant\\agent-transcripts\\9f82ef42-11b1-4efb-9355-a8a30043b996\\9f82ef42-11b1-4efb-9355-a8a30043b996.jsonl":  {
+                                                                                                                                                                                            "mtimeMs":  1787657454258
+                                                                                                                                                                                        },
+                        "C:\\Users\\User\\.cursor\\projects\\k-git-multi-tenant\\agent-transcripts\\c65a38e4-37bd-4a7f-bf7b-d595eece5832\\c65a38e4-37bd-4a7f-bf7b-d595eece5832.jsonl":  {
+                                                                                                                                                                                            "mtimeMs":  1787667000370
+                                                                                                                                                                                        },
+                        "C:\\Users\\User\\.cursor\\projects\\k-git-multi-tenant\\agent-transcripts\\c65a38e4-37bd-4a7f-bf7b-d595eece5832\\subagents\\b73d02dd-a65b-4d03-9ae6-eec96144627c.jsonl":  {
+                                                                                                                                                                                                       "mtimeMs":  1787657787320
+                                                                                                                                                                                                   },
+                        "C:\\Users\\User\\.cursor\\projects\\k-git-multi-tenant\\agent-transcripts\\c65a38e4-37bd-4a7f-bf7b-d595eece5832\\subagents\\cc31e69b-561f-4931-8420-26808f549c1c.jsonl":  {
+                                                                                                                                                                                                       "mtimeMs":  1787657766108
+                                                                                                                                                                                                   },
+                        "C:\\Users\\User\\.cursor\\projects\\k-git-multi-tenant\\agent-transcripts\\c65a38e4-37bd-4a7f-bf7b-d595eece5832\\subagents\\cdef13f8-ca29-4cb6-8189-ef2a4d01c887.jsonl":  {
+                                                                                                                                                                                                       "mtimeMs":  1787657727590
+                                                                                                                                                                                                   }
+                    }
+}
