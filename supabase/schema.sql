@@ -121,6 +121,9 @@ CREATE INDEX idx_projects_workspace ON public.projects(workspace_id);
 CREATE INDEX idx_audit_logs_workspace ON public.audit_logs(workspace_id);
 CREATE INDEX idx_audit_logs_user ON public.audit_logs(user_id);
 CREATE INDEX idx_audit_logs_created ON public.audit_logs(created_at DESC);
+CREATE UNIQUE INDEX workspace_invitations_pending_email
+  ON public.workspace_invitations (workspace_id, lower(email))
+  WHERE status = 'pending';
 
 -- ============================================================
 -- HELPER FUNCTIONS
@@ -128,26 +131,249 @@ CREATE INDEX idx_audit_logs_created ON public.audit_logs(created_at DESC);
 
 -- Check if user is super admin
 CREATE OR REPLACE FUNCTION public.is_super_admin()
-RETURNS BOOLEAN AS $$
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.profiles
     WHERE id = auth.uid() AND is_super_admin = TRUE
   );
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
+$$;
 
 -- Get user's role in a workspace
 CREATE OR REPLACE FUNCTION public.get_workspace_role(ws_id UUID)
-RETURNS workspace_role AS $$
+RETURNS workspace_role
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
   SELECT role FROM public.workspace_members
   WHERE workspace_id = ws_id AND user_id = auth.uid();
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
+$$;
 
 -- Get user's role in a project
 CREATE OR REPLACE FUNCTION public.get_project_role(proj_id UUID)
-RETURNS project_role AS $$
+RETURNS project_role
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
   SELECT role FROM public.project_members
   WHERE project_id = proj_id AND user_id = auth.uid();
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
+$$;
+
+-- True when the current user shares a workspace with other_user_id (bypasses RLS)
+CREATE OR REPLACE FUNCTION public.shares_workspace_with(other_user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.workspace_members a
+    JOIN public.workspace_members b ON a.workspace_id = b.workspace_id
+    WHERE a.user_id = auth.uid()
+      AND b.user_id = other_user_id
+  );
+$$;
+
+-- Block direct writes to is_super_admin unless set_super_admin() is in progress
+CREATE OR REPLACE FUNCTION public.protect_is_super_admin()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.is_super_admin IS DISTINCT FROM OLD.is_super_admin THEN
+    IF current_setting('app.set_super_admin', true) IS DISTINCT FROM 'on' THEN
+      RAISE EXCEPTION 'is_super_admin cannot be changed directly';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- Promote or demote a super admin (caller must already be super admin)
+CREATE OR REPLACE FUNCTION public.set_super_admin(target_user_id UUID, make_admin BOOLEAN)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  super_admin_count INTEGER;
+BEGIN
+  IF NOT public.is_super_admin() THEN
+    RAISE EXCEPTION 'Unauthorized: super admin required';
+  END IF;
+
+  IF auth.uid() = target_user_id THEN
+    RAISE EXCEPTION 'Cannot change your own super admin status';
+  END IF;
+
+  IF NOT make_admin THEN
+    SELECT COUNT(*) INTO super_admin_count
+    FROM public.profiles
+    WHERE is_super_admin = TRUE;
+
+    IF super_admin_count <= 1 THEN
+      RAISE EXCEPTION 'Cannot demote the last super admin';
+    END IF;
+  END IF;
+
+  PERFORM set_config('app.set_super_admin', 'on', true);
+
+  UPDATE public.profiles
+  SET is_super_admin = make_admin
+  WHERE id = target_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'User not found';
+  END IF;
+END;
+$$;
+
+-- Look up an invitation by secret token (no membership required)
+CREATE OR REPLACE FUNCTION public.get_invitation_by_token(invite_token TEXT)
+RETURNS TABLE (
+  id UUID,
+  workspace_id UUID,
+  workspace_name TEXT,
+  workspace_slug TEXT,
+  email TEXT,
+  role workspace_role,
+  status invitation_status,
+  expires_at TIMESTAMPTZ
+)
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT
+    i.id,
+    i.workspace_id,
+    w.name,
+    w.slug,
+    i.email,
+    i.role,
+    i.status,
+    i.expires_at
+  FROM public.workspace_invitations i
+  JOIN public.workspaces w ON w.id = i.workspace_id
+  WHERE i.token = invite_token
+  LIMIT 1;
+$$;
+
+CREATE OR REPLACE FUNCTION public.accept_workspace_invitation(invite_token TEXT)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  inv_id UUID;
+  inv_workspace_id UUID;
+  inv_email TEXT;
+  inv_role workspace_role;
+  inv_status invitation_status;
+  inv_expires TIMESTAMPTZ;
+  uid UUID := auth.uid();
+BEGIN
+  IF uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT i.id, i.workspace_id, i.email, i.role, i.status, i.expires_at
+  INTO inv_id, inv_workspace_id, inv_email, inv_role, inv_status, inv_expires
+  FROM public.workspace_invitations i
+  WHERE i.token = invite_token
+  FOR UPDATE;
+
+  IF inv_id IS NULL THEN
+    RAISE EXCEPTION 'Invitation not found';
+  END IF;
+
+  IF inv_status IS DISTINCT FROM 'pending' THEN
+    RAISE EXCEPTION 'This invitation has already been %', inv_status;
+  END IF;
+
+  IF inv_expires IS NOT NULL AND inv_expires < now() THEN
+    RAISE EXCEPTION 'Invitation has expired';
+  END IF;
+
+  IF lower(COALESCE(auth.jwt() ->> 'email', '')) IS DISTINCT FROM lower(inv_email) THEN
+    RAISE EXCEPTION 'This invitation was sent to a different email address';
+  END IF;
+
+  IF inv_role = 'owner' THEN
+    RAISE EXCEPTION 'Cannot accept an owner invitation';
+  END IF;
+
+  INSERT INTO public.workspace_members (workspace_id, user_id, role)
+  VALUES (inv_workspace_id, uid, inv_role)
+  ON CONFLICT (workspace_id, user_id) DO NOTHING;
+
+  UPDATE public.workspace_invitations
+  SET status = 'accepted'
+  WHERE id = inv_id;
+
+  RETURN inv_workspace_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.decline_workspace_invitation(invite_token TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  inv_id UUID;
+  inv_email TEXT;
+  inv_status invitation_status;
+  inv_expires TIMESTAMPTZ;
+  uid UUID := auth.uid();
+BEGIN
+  IF uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  SELECT i.id, i.email, i.status, i.expires_at
+  INTO inv_id, inv_email, inv_status, inv_expires
+  FROM public.workspace_invitations i
+  WHERE i.token = invite_token
+  FOR UPDATE;
+
+  IF inv_id IS NULL THEN
+    RAISE EXCEPTION 'Invitation not found';
+  END IF;
+
+  IF inv_status IS DISTINCT FROM 'pending' THEN
+    RAISE EXCEPTION 'This invitation has already been %', inv_status;
+  END IF;
+
+  IF inv_expires IS NOT NULL AND inv_expires < now() THEN
+    RAISE EXCEPTION 'Invitation has expired';
+  END IF;
+
+  IF lower(COALESCE(auth.jwt() ->> 'email', '')) IS DISTINCT FROM lower(inv_email) THEN
+    RAISE EXCEPTION 'This invitation was sent to a different email address';
+  END IF;
+
+  UPDATE public.workspace_invitations
+  SET status = 'revoked'
+  WHERE id = inv_id;
+END;
+$$;
 
 -- ============================================================
 -- AUTO-TRIGGER FUNCTIONS
@@ -155,7 +381,11 @@ $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
 -- Auto-create profile on user signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
   INSERT INTO public.profiles (id, full_name, avatar_url)
   VALUES (
@@ -165,27 +395,91 @@ BEGIN
   );
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 -- Auto-add creator as owner when workspace is created
 CREATE OR REPLACE FUNCTION public.handle_workspace_created()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
   INSERT INTO public.workspace_members (workspace_id, user_id, role)
   VALUES (NEW.id, NEW.created_by, 'owner');
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
 
 -- Auto-add creator as owner when project is created
 CREATE OR REPLACE FUNCTION public.handle_project_created()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
   INSERT INTO public.project_members (project_id, user_id, role)
   VALUES (NEW.id, NEW.created_by, 'owner');
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
+
+CREATE OR REPLACE FUNCTION public.prevent_last_workspace_owner_loss()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.role = 'owner' AND (
+      SELECT COUNT(*) FROM public.workspace_members
+      WHERE workspace_id = OLD.workspace_id AND role = 'owner'
+    ) <= 1 THEN
+      RAISE EXCEPTION 'Cannot remove the last workspace owner';
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF OLD.role = 'owner' AND NEW.role IS DISTINCT FROM 'owner' AND (
+    SELECT COUNT(*) FROM public.workspace_members
+    WHERE workspace_id = OLD.workspace_id AND role = 'owner'
+  ) <= 1 THEN
+    RAISE EXCEPTION 'Cannot demote the last workspace owner';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.prevent_last_project_owner_loss()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.role = 'owner' AND (
+      SELECT COUNT(*) FROM public.project_members
+      WHERE project_id = OLD.project_id AND role = 'owner'
+    ) <= 1 THEN
+      RAISE EXCEPTION 'Cannot remove the last project owner';
+    END IF;
+    RETURN OLD;
+  END IF;
+
+  IF OLD.role = 'owner' AND NEW.role IS DISTINCT FROM 'owner' AND (
+    SELECT COUNT(*) FROM public.project_members
+    WHERE project_id = OLD.project_id AND role = 'owner'
+  ) <= 1 THEN
+    RAISE EXCEPTION 'Cannot demote the last project owner';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
 
 -- ============================================================
 -- TRIGGERS
@@ -203,6 +497,18 @@ CREATE TRIGGER on_project_created
   AFTER INSERT ON public.projects
   FOR EACH ROW EXECUTE FUNCTION public.handle_project_created();
 
+CREATE TRIGGER protect_is_super_admin
+  BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.protect_is_super_admin();
+
+CREATE TRIGGER prevent_last_workspace_owner_loss
+  BEFORE DELETE OR UPDATE ON public.workspace_members
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_last_workspace_owner_loss();
+
+CREATE TRIGGER prevent_last_project_owner_loss
+  BEFORE DELETE OR UPDATE ON public.project_members
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_last_project_owner_loss();
+
 -- ============================================================
 -- ENABLE RLS
 -- ============================================================
@@ -219,11 +525,22 @@ ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 -- RLS POLICIES: PROFILES
 -- ============================================================
 
-CREATE POLICY "Users can view any profile"
-  ON public.profiles FOR SELECT USING (TRUE);
+CREATE POLICY "Users can view own profile"
+  ON public.profiles FOR SELECT
+  USING (auth.uid() = id);
+
+CREATE POLICY "Super admins can view all profiles"
+  ON public.profiles FOR SELECT
+  USING (public.is_super_admin());
+
+CREATE POLICY "Workspace members can view co-member profiles"
+  ON public.profiles FOR SELECT
+  USING (public.shares_workspace_with(id));
 
 CREATE POLICY "Users can update own profile"
-  ON public.profiles FOR UPDATE USING (auth.uid() = id);
+  ON public.profiles FOR UPDATE
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
 
 -- ============================================================
 -- RLS POLICIES: WORKSPACES
@@ -260,20 +577,44 @@ CREATE POLICY "Only workspace owner can delete"
 CREATE POLICY "Super admins can manage all workspace members"
   ON public.workspace_members FOR ALL USING (public.is_super_admin());
 
-CREATE POLICY "Users can view their workspace memberships"
-  ON public.workspace_members FOR SELECT USING (user_id = auth.uid());
-
-CREATE POLICY "Owners and admins can manage workspace members"
-  ON public.workspace_members FOR ALL USING (
-    public.get_workspace_role(workspace_id) IN ('owner', 'admin')
-  )
-  WITH CHECK (
-    public.get_workspace_role(workspace_id) IN ('owner', 'admin')
+CREATE POLICY "Workspace members can view fellow members"
+  ON public.workspace_members FOR SELECT USING (
+    public.get_workspace_role(workspace_id) IS NOT NULL
   );
 
-CREATE POLICY "Managers can invite workspace members"
+CREATE POLICY "Owners and admins can add workspace members"
   ON public.workspace_members FOR INSERT WITH CHECK (
-    public.get_workspace_role(workspace_id) = 'manager'
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
+  );
+
+CREATE POLICY "Owners and admins can update workspace members"
+  ON public.workspace_members FOR UPDATE
+  USING (
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
+  )
+  WITH CHECK (
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
+  );
+
+CREATE POLICY "Owners and admins can remove workspace members"
+  ON public.workspace_members FOR DELETE USING (
+    public.get_workspace_role(workspace_id) = 'owner'
+    OR (
+      public.get_workspace_role(workspace_id) = 'admin'
+      AND role <> 'owner'
+    )
   );
 
 CREATE POLICY "Users can leave workspace"
@@ -286,17 +627,15 @@ CREATE POLICY "Users can leave workspace"
 CREATE POLICY "Super admins can manage all invitations"
   ON public.workspace_invitations FOR ALL USING (public.is_super_admin());
 
-CREATE POLICY "Workspace members can view invitations"
+CREATE POLICY "Owner/Admin/Manager can view invitations"
   ON public.workspace_invitations FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.workspace_members wm
-      WHERE wm.workspace_id = workspace_id AND wm.user_id = auth.uid()
-    )
+    public.get_workspace_role(workspace_id) IN ('owner', 'admin', 'manager')
   );
 
 CREATE POLICY "Owner/Admin/Manager can create invitations"
   ON public.workspace_invitations FOR INSERT WITH CHECK (
     public.get_workspace_role(workspace_id) IN ('owner', 'admin', 'manager')
+    AND role <> 'owner'
   );
 
 CREATE POLICY "Owner/Admin can update invitations"
@@ -350,43 +689,92 @@ CREATE POLICY "Super admins can manage all project members"
 
 CREATE POLICY "Project members can view project members"
   ON public.project_members FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.project_members pm
-      WHERE pm.project_id = project_id AND pm.user_id = auth.uid()
-    )
-    OR
-    EXISTS (
+    public.get_project_role(project_id) IS NOT NULL
+    OR EXISTS (
       SELECT 1 FROM public.projects p
-      JOIN public.workspace_members wm ON p.workspace_id = wm.workspace_id
-      WHERE p.id = project_id AND wm.user_id = auth.uid()
-      AND wm.role IN ('owner', 'admin', 'manager')
+      WHERE p.id = project_id
+        AND public.get_workspace_role(p.workspace_id) IN ('owner', 'admin', 'manager')
     )
   );
 
-CREATE POLICY "Workspace owners and admins can manage project members"
-  ON public.project_members FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.projects p
-      JOIN public.workspace_members wm ON p.workspace_id = wm.workspace_id
-      WHERE p.id = project_id AND wm.user_id = auth.uid()
-      AND wm.role IN ('owner', 'admin')
+CREATE POLICY "Owners and admins can add project members"
+  ON public.project_members FOR INSERT WITH CHECK (
+    (
+      public.get_project_role(project_id) = 'owner'
+      OR EXISTS (
+        SELECT 1 FROM public.projects p
+        WHERE p.id = project_id
+          AND public.get_workspace_role(p.workspace_id) IN ('owner', 'admin')
+      )
     )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.projects p
-      JOIN public.workspace_members wm ON p.workspace_id = wm.workspace_id
-      WHERE p.id = project_id AND wm.user_id = auth.uid()
-      AND wm.role IN ('owner', 'admin')
+    AND (
+      role <> 'owner'
+      OR public.get_project_role(project_id) = 'owner'
+      OR EXISTS (
+        SELECT 1 FROM public.projects p
+        WHERE p.id = project_id
+          AND public.get_workspace_role(p.workspace_id) = 'owner'
+      )
     )
   );
 
-CREATE POLICY "Project owners and admins can manage project members"
-  ON public.project_members FOR ALL USING (
-    public.get_project_role(project_id) IN ('owner', 'admin')
+CREATE POLICY "Owners and admins can update project members"
+  ON public.project_members FOR UPDATE
+  USING (
+    public.get_project_role(project_id) = 'owner'
+    OR (
+      public.get_project_role(project_id) = 'admin'
+      AND role <> 'owner'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.projects p
+      WHERE p.id = project_id
+        AND (
+          public.get_workspace_role(p.workspace_id) = 'owner'
+          OR (
+            public.get_workspace_role(p.workspace_id) = 'admin'
+            AND role <> 'owner'
+          )
+        )
+    )
   )
   WITH CHECK (
-    public.get_project_role(project_id) IN ('owner', 'admin')
+    public.get_project_role(project_id) = 'owner'
+    OR (
+      public.get_project_role(project_id) = 'admin'
+      AND role <> 'owner'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.projects p
+      WHERE p.id = project_id
+        AND (
+          public.get_workspace_role(p.workspace_id) = 'owner'
+          OR (
+            public.get_workspace_role(p.workspace_id) = 'admin'
+            AND role <> 'owner'
+          )
+        )
+    )
+  );
+
+CREATE POLICY "Owners and admins can remove project members"
+  ON public.project_members FOR DELETE USING (
+    public.get_project_role(project_id) = 'owner'
+    OR (
+      public.get_project_role(project_id) = 'admin'
+      AND role <> 'owner'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.projects p
+      WHERE p.id = project_id
+        AND (
+          public.get_workspace_role(p.workspace_id) = 'owner'
+          OR (
+            public.get_workspace_role(p.workspace_id) = 'admin'
+            AND role <> 'owner'
+          )
+        )
+    )
   );
 
 CREATE POLICY "Users can leave project"
@@ -403,3 +791,23 @@ CREATE POLICY "Workspace owner/admin can view workspace audit logs"
   ON public.audit_logs FOR SELECT USING (
     public.get_workspace_role(workspace_id) IN ('owner', 'admin')
   );
+
+CREATE POLICY "Users can insert their own audit logs"
+  ON public.audit_logs FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+-- ============================================================
+-- FUNCTION GRANTS
+-- ============================================================
+
+REVOKE ALL ON FUNCTION public.set_super_admin(UUID, BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.accept_workspace_invitation(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.decline_workspace_invitation(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_super_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_workspace_role(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_project_role(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.shares_workspace_with(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_super_admin(UUID, BOOLEAN) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_invitation_by_token(TEXT) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.accept_workspace_invitation(TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.decline_workspace_invitation(TEXT) TO authenticated;

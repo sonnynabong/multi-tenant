@@ -15,6 +15,33 @@ export const PROJECT_ROLES = [
   'viewer',
 ] as const
 
+export const INVITEABLE_WORKSPACE_ROLES = WORKSPACE_ROLES.filter(
+  (role) => role !== "owner"
+)
+
+export const ASSIGNABLE_PROJECT_ROLES_NON_OWNER = PROJECT_ROLES.filter(
+  (role) => role !== "owner"
+)
+
+export function assignableWorkspaceRoles(
+  actor: WorkspaceRole | null,
+  isSuperAdmin: boolean
+): readonly WorkspaceRole[] {
+  if (isSuperAdmin || actor === "owner") return WORKSPACE_ROLES
+  return INVITEABLE_WORKSPACE_ROLES
+}
+
+export function assignableProjectRoles(
+  projectRole: ProjectRole | null,
+  workspaceRole: WorkspaceRole | null,
+  isSuperAdmin: boolean
+): readonly ProjectRole[] {
+  if (isSuperAdmin || projectRole === "owner" || workspaceRole === "owner") {
+    return PROJECT_ROLES
+  }
+  return ASSIGNABLE_PROJECT_ROLES_NON_OWNER
+}
+
 export type WorkspaceRole = typeof WORKSPACE_ROLES[number]
 export type ProjectRole = typeof PROJECT_ROLES[number]
 

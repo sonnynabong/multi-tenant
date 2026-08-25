@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
+import { safeInternalPath } from "@/lib/safe-internal-path"
+import Link from "next/link"
 
 function LoginFormContent() {
   const [email, setEmail] = useState("")
@@ -39,13 +41,8 @@ function LoginFormContent() {
     }
 
     toast.success("Logged in successfully")
-    
-    // Redirect to the specified URL or default to /workspace
-    if (redirectTo) {
-      router.push(redirectTo)
-    } else {
-      router.push("/workspace")
-    }
+
+    router.push(safeInternalPath(redirectTo))
     router.refresh()
   }
 
@@ -76,7 +73,15 @@ function LoginFormContent() {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password">Password</Label>
+              <Link
+                href="/forgot-password"
+                className="text-sm text-primary underline-offset-4 hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
             <Input
               id="password"
               type="password"

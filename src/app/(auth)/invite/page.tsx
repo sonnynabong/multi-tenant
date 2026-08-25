@@ -8,16 +8,18 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { toast } from "sonner"
 import Link from "next/link"
 import { Skeleton } from "@/components/ui/skeleton"
+import type { Database } from "@/types/database"
+
+type InvitationPreview = Database["public"]["Functions"]["get_invitation_by_token"]["Returns"][number]
 
 function AcceptInviteContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const supabase = createClient()
-  
+
   const token = searchParams.get("token")
-  
-  const [invitation, setInvitation] = useState<any>(null)
-  const [workspace, setWorkspace] = useState<any>(null)
+
+  const [invitation, setInvitation] = useState<InvitationPreview | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isAccepting, setIsAccepting] = useState(false)
   const [isDeclining, setIsDeclining] = useState(false)
@@ -30,121 +32,94 @@ function AcceptInviteContent() {
       setIsLoading(false)
       return
     }
-    
-    fetchInvitation()
-  }, [token])
 
-  const fetchInvitation = async () => {
-    setIsLoading(true)
-    
-    if (!token) {
-      setError("Invalid invitation link")
-      setIsLoading(false)
-      return
-    }
-    
-    const { data: invitationData } = await supabase
-      .from("workspace_invitations")
-      .select(`
-        *,
-        workspace:workspaces(*)
-      `)
-      .eq("token", token)
-      .single()
+    const fetchInvitation = async () => {
+      setIsLoading(true)
 
-    if (!invitationData) {
-      setError("Invitation not found or has expired")
-      setIsLoading(false)
-      return
-    }
-
-    // Check if invitation is expired
-    if (invitationData.expires_at && new Date(invitationData.expires_at) < new Date()) {
-      setError("This invitation has expired")
-      setIsLoading(false)
-      return
-    }
-
-    // Check if invitation is still pending
-    if (invitationData.status !== "pending") {
-      setError(`This invitation has already been ${invitationData.status}`)
-      setIsLoading(false)
-      return
-    }
-
-    setInvitation(invitationData)
-    setWorkspace(invitationData.workspace)
-    setIsLoading(false)
-  }
-
-  const handleAccept = async () => {
-    setIsAccepting(true)
-    
-    const { data: { user } } = await supabase.auth.getUser()
-    
-    if (!user) {
-      // Redirect to login with return URL
-      router.push(`/login?redirect=/invite?token=${token}`)
-      return
-    }
-
-    // Check if email matches invitation
-    if (user.email !== invitation.email) {
-      toast.error("This invitation was sent to a different email address")
-      setIsAccepting(false)
-      return
-    }
-
-    // Add user to workspace
-    const { error: memberError } = await supabase
-      .from("workspace_members")
-      .insert({
-        workspace_id: invitation.workspace_id,
-        user_id: user.id,
-        role: invitation.role,
+      const { data, error: rpcError } = await supabase.rpc("get_invitation_by_token", {
+        invite_token: token,
       })
 
-    if (memberError) {
-      toast.error(memberError.message)
-      setIsAccepting(false)
+      const invitationData = data?.[0]
+
+      if (rpcError || !invitationData) {
+        setError("Invitation not found or has expired")
+        setIsLoading(false)
+        return
+      }
+
+      if (invitationData.expires_at && new Date(invitationData.expires_at) < new Date()) {
+        setError("This invitation has expired")
+        setIsLoading(false)
+        return
+      }
+
+      if (invitationData.status !== "pending") {
+        setError(`This invitation has already been ${invitationData.status}`)
+        setIsLoading(false)
+        return
+      }
+
+      setInvitation(invitationData)
+      setIsLoading(false)
+    }
+
+    void fetchInvitation()
+  }, [token, supabase])
+
+  const handleAccept = async () => {
+    if (!token) return
+    setIsAccepting(true)
+
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) {
+      router.push(`/login?redirect=${encodeURIComponent(`/invite?token=${token}`)}`)
       return
     }
 
-    // Update invitation status
-    const { error: inviteError } = await supabase
-      .from("workspace_invitations")
-      .update({ status: "accepted" })
-      .eq("id", invitation.id)
+    const { error: acceptError } = await supabase.rpc("accept_workspace_invitation", {
+      invite_token: token,
+    })
 
-    if (inviteError) {
-      toast.error(inviteError.message)
+    if (acceptError) {
+      toast.error(acceptError.message)
       setIsAccepting(false)
       return
     }
 
     setSuccess(true)
     toast.success("You have joined the workspace!")
-    
-    // Redirect to workspace after a delay
+
     setTimeout(() => {
-      router.push(`/workspace/${workspace.slug}`)
+      if (invitation?.workspace_slug) {
+        router.push(`/workspace/${invitation.workspace_slug}`)
+      } else {
+        router.push("/workspace")
+      }
     }, 2000)
-    
+
     setIsAccepting(false)
   }
 
   const handleDecline = async () => {
+    if (!token) return
     if (!confirm("Are you sure you want to decline this invitation?")) return
-    
+
     setIsDeclining(true)
 
-    const { error } = await supabase
-      .from("workspace_invitations")
-      .update({ status: "revoked" })
-      .eq("id", invitation.id)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      router.push(`/login?redirect=${encodeURIComponent(`/invite?token=${token}`)}`)
+      return
+    }
 
-    if (error) {
-      toast.error(error.message)
+    const { error: declineError } = await supabase.rpc("decline_workspace_invitation", {
+      invite_token: token,
+    })
+
+    if (declineError) {
+      toast.error(declineError.message)
     } else {
       toast.success("Invitation declined")
       setTimeout(() => {
@@ -195,7 +170,7 @@ function AcceptInviteContent() {
           <CardHeader>
             <CardTitle className="text-green-600">Success!</CardTitle>
             <CardDescription>
-              You have successfully joined {workspace?.name}
+              You have successfully joined {invitation?.workspace_name}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -220,7 +195,7 @@ function AcceptInviteContent() {
         <CardContent className="space-y-4">
           <div className="p-4 bg-muted rounded-lg">
             <p className="text-sm text-muted-foreground">Workspace</p>
-            <p className="text-lg font-semibold">{workspace?.name}</p>
+            <p className="text-lg font-semibold">{invitation?.workspace_name}</p>
           </div>
           <div className="p-4 bg-muted rounded-lg">
             <p className="text-sm text-muted-foreground">Role</p>
@@ -232,15 +207,15 @@ function AcceptInviteContent() {
           </div>
         </CardContent>
         <CardFooter className="flex gap-2">
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             className="flex-1"
             onClick={handleDecline}
             disabled={isDeclining || isAccepting}
           >
             {isDeclining ? "Declining..." : "Decline"}
           </Button>
-          <Button 
+          <Button
             className="flex-1"
             onClick={handleAccept}
             disabled={isAccepting || isDeclining}

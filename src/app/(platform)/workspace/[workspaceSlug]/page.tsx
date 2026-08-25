@@ -41,13 +41,26 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
     .eq("user_id", user.id)
     .maybeSingle()
 
-  // Get projects
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_super_admin")
+    .eq("id", user.id)
+    .single()
+
+  const { count: projectCount } = await supabase
+    .from("projects")
+    .select("*", { count: "exact", head: true })
+    .eq("workspace_id", workspace.id)
+
   const { data: projects } = await supabase
     .from("projects")
     .select("*")
     .eq("workspace_id", workspace.id)
     .order("created_at", { ascending: false })
     .limit(5)
+
+  const roleLabel = myMembership?.role
+    ?? (profile?.is_super_admin ? "Super admin" : "—")
 
   return (
     <>
@@ -67,7 +80,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
                 <CardTitle className="text-sm font-medium">Total Projects</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{projects?.length || 0}</div>
+                <div className="text-2xl font-bold">{projectCount ?? 0}</div>
               </CardContent>
             </Card>
             <Card>
@@ -96,7 +109,7 @@ export default async function WorkspacePage({ params }: WorkspacePageProps) {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold capitalize">
-                  {myMembership?.role ?? "Member"}
+                  {roleLabel}
                 </div>
               </CardContent>
             </Card>

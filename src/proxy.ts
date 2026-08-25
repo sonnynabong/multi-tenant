@@ -42,7 +42,8 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/profile") ||
     path.startsWith("/settings") ||
     path.startsWith("/onboarding") ||
-    path.startsWith("/admin");
+    path.startsWith("/admin") ||
+    path.startsWith("/reset-password");
 
   // Redirect unauthenticated users away from authenticated app routes
   if (!user && requiresAuth) {
