@@ -21,6 +21,7 @@ interface User {
 export default function AdminUsersPage() {
   const supabase = createClient()
   const [users, setUsers] = useState<User[]>([])
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
 
@@ -30,7 +31,10 @@ export default function AdminUsersPage() {
 
   const fetchUsers = async () => {
     setIsLoading(true)
-    
+
+    const { data: { user } } = await supabase.auth.getUser()
+    setCurrentUserId(user?.id ?? null)
+
     // Get all profiles with workspace counts
     const { data: profilesData } = await supabase
       .from("profiles")
@@ -54,48 +58,35 @@ export default function AdminUsersPage() {
 
   const toggleSuperAdmin = async (userId: string, currentStatus: boolean) => {
     setUpdatingId(userId)
-    
-    // Call the Edge Function to update super admin status
-    // This bypasses RLS since Edge Functions use the service role key
-    const { data: { session } } = await supabase.auth.getSession()
-    
+
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/admin-toggle-super-admin`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userId,
-          isSuperAdmin: !currentStatus,
-        }),
+      const { error } = await supabase.rpc("set_super_admin", {
+        target_user_id: userId,
+        make_admin: !currentStatus,
       })
 
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to update user')
+      if (error) {
+        throw error
       }
 
       toast.success(
-        currentStatus 
-          ? "User demoted from super admin" 
+        currentStatus
+          ? "User demoted from super admin"
           : "User promoted to super admin"
       )
-      
-      // Log the action
+
       await logAction({
         action: currentStatus ? AuditActions.ADMIN_DEMOTED : AuditActions.ADMIN_PROMOTED,
         targetType: "user",
         targetId: userId,
         metadata: { previous_status: currentStatus },
       })
-      
+
       fetchUsers()
-    } catch (error: any) {
-      toast.error(error.message)
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to update user")
     }
-    
+
     setUpdatingId(null)
   }
 
@@ -163,7 +154,7 @@ export default function AdminUsersPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => toggleSuperAdmin(user.id, user.is_super_admin || false)}
-                        disabled={updatingId === user.id}
+                        disabled={updatingId === user.id || user.id === currentUserId}
                       >
                         {user.is_super_admin ? (
                           <>

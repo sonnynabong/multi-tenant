@@ -341,6 +341,11 @@ export type Database = {
         Returns: Database["public"]["Enums"]["workspace_role"]
       }
       is_super_admin: { Args: never; Returns: boolean }
+      set_super_admin: {
+        Args: { target_user_id: string; make_admin: boolean }
+        Returns: undefined
+      }
+      shares_workspace_with: { Args: { other_user_id: string }; Returns: boolean }
     }
     Enums: {
       invitation_status: "pending" | "accepted" | "expired" | "revoked"
